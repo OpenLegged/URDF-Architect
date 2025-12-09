@@ -425,7 +425,7 @@ export default function App() {
             </button>
 
             <a 
-                href="https://github.com/Wangxinhui-bot/UrdfArchitect"
+                href="https://github.com/OpenLegged/URDF-Architect"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center justify-center p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded transition-colors"
