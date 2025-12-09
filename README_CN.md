@@ -1,6 +1,6 @@
 <div align="center">
 
-# UrdfArchitect
+# URDF Architect
 
 **下一代可视化机器人设计平台**
 
@@ -21,6 +21,8 @@
 **UrdfArchitect** 是一款先进的 Web 端可视化机器人设计环境，专为简化 URDF（Unified Robot Description Format）模型的创建、编辑与导出而生。通过将繁琐的 XML 代码编写抽象为直观的图形化交互，它赋予机器人工程师专注于设计创新与架构验证的能力。
 
 该平台覆盖了机器人建模的全生命周期——从运动学骨架的构建，到高保真几何细节的打磨，再到精密硬件参数的配置。结合 **生成式 AI** 的强大能力，UrdfArchitect 显著加速了原型设计流程，并确保与 MuJoCo 等工业级仿真生态系统的无缝兼容。
+
+UrdfArchitect 现已在线部署于 https://urdf.d-robotics.cc/，可直接在浏览器中体验。
 
 ## ✨ 核心能力
 
