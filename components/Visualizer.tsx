@@ -274,7 +274,7 @@ function JointNode({
                 object={jointGroup}
                 mode={transformMode}
                 size={0.7}
-                space="local"
+                space="world"
                 onMouseUp={handleTransformEnd}
             />
         )}
@@ -472,7 +472,7 @@ function RobotNode({
           <TransformControls
               object={activeGeometryRef}
               mode={transformMode}
-              space="local"
+              space="world"
               size={0.6}
               onMouseUp={handleGeometryTransformEnd}
           />
