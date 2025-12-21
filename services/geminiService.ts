@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import OpenAI from "openai";
 import { RobotState, GeometryType, JointType, MotorSpec } from '../types';
 
 interface AIResponse {
@@ -64,9 +64,6 @@ export const generateRobotFromPrompt = async (
     };
   }
 
-<<<<<<< Updated upstream
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-=======
   const openai = new OpenAI({ 
     apiKey: process.env.API_KEY,
     baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
@@ -79,7 +76,6 @@ export const generateRobotFromPrompt = async (
     baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
     hasApiKey: !!process.env.API_KEY
   });
->>>>>>> Stashed changes
 
   // Simplify current robot state for context (remove heavy UI stuff if any, keep structure)
   const contextRobot = {
@@ -121,68 +117,10 @@ export const generateRobotFromPrompt = async (
   `;
 
   // Schema definition
-  const responseSchema = {
-    type: Type.OBJECT,
-    properties: {
-      explanation: { type: Type.STRING, description: "A brief explanation of what was done or advice given." },
-      actionType: { type: Type.STRING, enum: ['modification', 'generation', 'advice'] },
-      // Optional: Only populate if actionType is modification or generation
-      robotData: {
-          type: Type.OBJECT,
-          nullable: true,
-          properties: {
-            name: { type: Type.STRING },
-            links: {
-                type: Type.ARRAY,
-                items: {
-                type: Type.OBJECT,
-                properties: {
-                    id: { type: Type.STRING },
-                    name: { type: Type.STRING },
-                    visualType: { type: Type.STRING, enum: ['box', 'cylinder', 'sphere'] },
-                    dimensions: { type: Type.ARRAY, items: { type: Type.NUMBER } }, // [x, y, z]
-                    color: { type: Type.STRING },
-                    mass: { type: Type.NUMBER }
-                }
-                }
-            },
-            joints: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        id: { type: Type.STRING },
-                        name: { type: Type.STRING },
-                        type: { type: Type.STRING, enum: ['revolute', 'fixed', 'prismatic', 'continuous'] },
-                        parentLinkId: { type: Type.STRING },
-                        childLinkId: { type: Type.STRING },
-                        originXYZ: { type: Type.ARRAY, items: { type: Type.NUMBER } },
-                        originRPY: { type: Type.ARRAY, items: { type: Type.NUMBER } },
-                        axis: { type: Type.ARRAY, items: { type: Type.NUMBER } },
-                        motorType: { type: Type.STRING, nullable: true }, // Optional hardware update
-                        lowerLimit: { type: Type.NUMBER, nullable: true },
-                        upperLimit: { type: Type.NUMBER, nullable: true },
-                        effortLimit: { type: Type.NUMBER, nullable: true },
-                        velocityLimit: { type: Type.NUMBER, nullable: true }
-                    }
-                }
-            },
-            rootLinkId: { type: Type.STRING }
-          }
-      }
-    }
-  };
+  // Schema definition for OpenAI structured output (not used with json_object format, but kept for reference)
+  // Note: OpenAI json_object format doesn't use strict schema validation
 
   try {
-<<<<<<< Updated upstream
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        systemInstruction: systemPrompt,
-        responseMimeType: "application/json",
-        responseSchema: responseSchema,
-=======
     const response = await openai.chat.completions.create({
       model: modelName,
       messages: [
@@ -191,25 +129,10 @@ export const generateRobotFromPrompt = async (
       ],
       response_format: { 
         type: "json_object"
->>>>>>> Stashed changes
       },
+      temperature: 0.7,
     });
 
-<<<<<<< Updated upstream
-    const text = response.text;
-    if (!text) return null;
-    
-    // JSON Extraction Logic
-    let jsonString = '';
-    const jsonBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (jsonBlockMatch) {
-      jsonString = jsonBlockMatch[1];
-    } else {
-      const firstOpen = text.indexOf('{');
-      const lastClose = text.lastIndexOf('}');
-      if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
-        jsonString = text.substring(firstOpen, lastClose + 1);
-=======
     const content = response.choices[0]?.message?.content;
     if (!content) {
       console.error("No content in API response");
@@ -249,7 +172,6 @@ export const generateRobotFromPrompt = async (
             console.error("Failed to parse JSON from extracted substring", e);
           }
         }
->>>>>>> Stashed changes
       }
       
       if (!result) {
@@ -260,9 +182,6 @@ export const generateRobotFromPrompt = async (
       }
     }
     
-    if (!jsonString) return null;
-
-    const result = JSON.parse(jsonString);
     const data = result.robotData;
 
     // If there is data, parse it back to our full State format
@@ -344,11 +263,6 @@ export const generateRobotFromPrompt = async (
         robotData: finalRobotState
     };
 
-<<<<<<< Updated upstream
-  } catch (e) {
-    console.error("Gemini generation failed", e);
-    return null;
-=======
   } catch (e: any) {
     console.error("OpenAI API call failed", e);
     console.error("Error details:", {
@@ -363,6 +277,5 @@ export const generateRobotFromPrompt = async (
       explanation: `API 调用失败: ${e?.message || '未知错误'}${e?.status ? ` (状态码: ${e.status})` : ''}`,
       actionType: 'advice' as const
     };
->>>>>>> Stashed changes
   }
 };
