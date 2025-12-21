@@ -101,11 +101,9 @@ const OBJRenderer = ({ url, material, color }: { url: string, material: THREE.Ma
 };
 
 const DAERenderer = ({ url, material }: { url: string, material: THREE.Material }) => {
-    const dae = useLoader(ColladaLoader, url, (loader: ColladaLoader) => {
-        // Collada meshes in URDFs are authored in Z-up; keep that frame so the URDF
-        // origin rpy is still valid instead of letting the loader force Y-up.
-        loader.options.convertUpAxis = false;
-    });
+    // Load DAE file - note: newer versions of ColladaLoader may not support options
+    // The coordinate system conversion is handled via rotation below
+    const dae = useLoader(ColladaLoader, url);
     const clone = useMemo(() => {
         const c = dae.scene.clone();
         c.traverse((child) => {
