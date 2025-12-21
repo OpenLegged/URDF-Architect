@@ -275,13 +275,13 @@ function JointNode({
             />
         </group>
 
-        {/* Transform Controls for Joints in Skeleton Mode */}
+        {/* Transform Controls - must be outside jointGroup to control it */}
         {isSelected && mode === 'skeleton' && jointGroup && (
             <TransformControls 
                 object={jointGroup}
                 mode={transformMode}
                 size={0.7}
-                space="local"
+                space="world"
                 onMouseUp={handleTransformEnd}
             />
         )}

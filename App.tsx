@@ -347,9 +347,10 @@ export default function App() {
         } else {
             alert("Failed to get a response from AI.");
         }
-    } catch (e) {
+    } catch (e: any) {
         console.error("AI Generation Error", e);
-        alert("An error occurred during generation.");
+        const errorMessage = e?.message || '未知错误';
+        alert(`生成失败: ${errorMessage}\n\n请检查浏览器控制台获取详细信息。`);
     } finally {
         setIsGeneratingAI(false);
     }

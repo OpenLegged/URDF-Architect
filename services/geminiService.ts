@@ -53,13 +53,33 @@ export const generateRobotFromPrompt = async (
 
   if (!process.env.API_KEY) {
     console.error("API Key missing");
+    console.error("Available env vars:", {
+      API_KEY: process.env.API_KEY ? '***' : 'missing',
+      OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+      OPENAI_MODEL: process.env.OPENAI_MODEL
+    });
     return {
         explanation: "API Key is missing. Please configure the environment.",
         actionType: 'advice'
     };
   }
 
+<<<<<<< Updated upstream
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+=======
+  const openai = new OpenAI({ 
+    apiKey: process.env.API_KEY,
+    baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+    dangerouslyAllowBrowser: true // 允许在浏览器中使用，因为我们使用代理服务器
+  });
+
+  const modelName = process.env.OPENAI_MODEL || 'bce/deepseek-v3.2';
+  console.log('[AI Service] Configuration:', {
+    model: modelName,
+    baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+    hasApiKey: !!process.env.API_KEY
+  });
+>>>>>>> Stashed changes
 
   // Simplify current robot state for context (remove heavy UI stuff if any, keep structure)
   const contextRobot = {
@@ -154,6 +174,7 @@ export const generateRobotFromPrompt = async (
   };
 
   try {
+<<<<<<< Updated upstream
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
@@ -161,9 +182,20 @@ export const generateRobotFromPrompt = async (
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",
         responseSchema: responseSchema,
+=======
+    const response = await openai.chat.completions.create({
+      model: modelName,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt }
+      ],
+      response_format: { 
+        type: "json_object"
+>>>>>>> Stashed changes
       },
     });
 
+<<<<<<< Updated upstream
     const text = response.text;
     if (!text) return null;
     
@@ -177,6 +209,54 @@ export const generateRobotFromPrompt = async (
       const lastClose = text.lastIndexOf('}');
       if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
         jsonString = text.substring(firstOpen, lastClose + 1);
+=======
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      console.error("No content in API response");
+      return {
+        explanation: "API 返回了空内容，请重试。",
+        actionType: 'advice' as const
+      };
+    }
+    
+    console.log("[AI Service] Raw response content:", content.substring(0, 200) + "...");
+    
+    // Parse JSON response
+    let result;
+    try {
+      result = JSON.parse(content);
+    } catch (parseError: any) {
+      console.error("Failed to parse JSON response", parseError);
+      console.error("Content that failed to parse:", content);
+      
+      // Fallback: try to extract JSON from markdown code blocks
+      const jsonBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (jsonBlockMatch) {
+        try {
+          result = JSON.parse(jsonBlockMatch[1]);
+        } catch (e) {
+          console.error("Failed to parse JSON from code block", e);
+        }
+      }
+      
+      if (!result) {
+        const firstOpen = content.indexOf('{');
+        const lastClose = content.lastIndexOf('}');
+        if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+          try {
+            result = JSON.parse(content.substring(firstOpen, lastClose + 1));
+          } catch (e) {
+            console.error("Failed to parse JSON from extracted substring", e);
+          }
+        }
+>>>>>>> Stashed changes
+      }
+      
+      if (!result) {
+        return {
+          explanation: `JSON 解析失败: ${parseError?.message || '未知错误'}\n\n原始响应: ${content.substring(0, 500)}`,
+          actionType: 'advice' as const
+        };
       }
     }
     
@@ -264,8 +344,25 @@ export const generateRobotFromPrompt = async (
         robotData: finalRobotState
     };
 
+<<<<<<< Updated upstream
   } catch (e) {
     console.error("Gemini generation failed", e);
     return null;
+=======
+  } catch (e: any) {
+    console.error("OpenAI API call failed", e);
+    console.error("Error details:", {
+      message: e?.message,
+      status: e?.status,
+      code: e?.code,
+      response: e?.response
+    });
+    
+    // 返回一个包含错误信息的响应，而不是 null
+    return {
+      explanation: `API 调用失败: ${e?.message || '未知错误'}${e?.status ? ` (状态码: ${e.status})` : ''}`,
+      actionType: 'advice' as const
+    };
+>>>>>>> Stashed changes
   }
 };
