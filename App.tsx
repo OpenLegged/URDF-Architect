@@ -233,99 +233,139 @@ export default function App() {
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-    try {
-        const zip = await JSZip.loadAsync(file);
-        
-        // 0. Parse Motor Library (if present)
-        // Expected structure: library/motor library/[Brand]/[MotorName].txt
-        const libraryFolder = zip.folder("library/motor library");
-        if (libraryFolder) {
-            const newLibrary: Record<string, MotorSpec[]> = { ...DEFAULT_MOTOR_LIBRARY };
-            
-            const libPromises: Promise<void>[] = [];
-            
-            libraryFolder.forEach((relativePath: string, fileEntry: any) => {
-                if (!fileEntry.dir && relativePath.endsWith('.txt')) {
-                    // Path is like "Brand/Motor.txt"
-                    const parts = relativePath.split('/');
-                    if (parts.length === 2) {
-                        const brand = parts[0];
-                        const p = fileEntry.async("string").then((content: string) => {
-                            try {
-                                const spec = JSON.parse(content) as MotorSpec;
-                                if (!newLibrary[brand]) newLibrary[brand] = [];
-                                // Avoid duplicates
-                                if (!newLibrary[brand].some(m => m.name === spec.name)) {
-                                    newLibrary[brand].push(spec);
-                                }
-                            } catch (err: any) {
-                                console.warn("Failed to parse motor spec", relativePath);
-                            }
-                        });
-                        libPromises.push(p);
-                    }
-                }
-            });
-            await Promise.all(libPromises);
-            setMotorLibrary(newLibrary);
+    // Helper to process a "virtual filesystem" (map of filename -> blob/url)
+    const processVirtualFS = async (
+        urdfFile: { name: string, content: string }, 
+        assetFiles: { name: string, blob: Blob }[],
+        libraryFiles: { path: string, content: string }[]
+    ) => {
+        // 0. Process Motor Library if found
+        if (libraryFiles.length > 0) {
+             const newLibrary: Record<string, MotorSpec[]> = { ...DEFAULT_MOTOR_LIBRARY };
+             libraryFiles.forEach(f => {
+                 try {
+                     const parts = f.path.split('/');
+                     // Expecting .../Brand/Motor.txt
+                     if (parts.length >= 2) {
+                         const brand = parts[parts.length - 2];
+                         const spec = JSON.parse(f.content) as MotorSpec;
+                         if (!newLibrary[brand]) newLibrary[brand] = [];
+                         if (!newLibrary[brand].some(m => m.name === spec.name)) {
+                             newLibrary[brand].push(spec);
+                         }
+                     }
+                 } catch (err) {
+                     console.warn("Failed to parse motor spec", f.path);
+                 }
+             });
+             setMotorLibrary(newLibrary);
         }
 
-        // 1. Find and Parse URDF
-        // Search in root or 'urdf/' folder
-        const urdfFiles = zip.file(/\.urdf$/i);
-        if (urdfFiles.length === 0) {
-            // It might be just a library import? 
-            if (libraryFolder) {
+        // 1. Process URDF
+        if (!urdfFile) {
+            if (libraryFiles.length > 0) {
                 alert("Library imported successfully!");
                 return;
             }
-            alert("No URDF file found in the archive.");
+            alert("No URDF file found.");
             return;
         }
 
-        const urdfContent = await urdfFiles[0].async("string") as string;
-        const newState = parseURDF(urdfContent);
-
+        const newState = parseURDF(urdfFile.content);
         if (newState) {
-            // 2. Load Assets (Meshes)
-            // Look for any supported mesh files in the ZIP, regardless of folder
+            // 2. Load Assets
             const newAssets: Record<string, string> = {};
-            const meshPromises: Promise<void>[] = [];
-            
-            zip.forEach((relativePath: string, fileEntry: any) => {
-                if (fileEntry.dir) return;
-                
-                const ext = relativePath.split('.').pop()?.toLowerCase();
-                if (['stl', 'obj', 'dae'].includes(ext || '')) {
-                     const p = fileEntry.async("blob").then((blob: Blob) => {
-                         // We use the basename as the key, because URDF usually references "package://robot/meshes/basename.stl"
-                         // and our parser extracts just "basename.stl".
-                         const filename = relativePath.split('/').pop()!; 
-                         const url = URL.createObjectURL(blob);
-                         newAssets[filename] = url;
-                     });
-                     meshPromises.push(p);
-                }
+            const assetPromises = assetFiles.map(async f => {
+                 const ext = f.name.split('.').pop()?.toLowerCase();
+                 if (['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp'].includes(ext || '')) {
+                     // Use basename for simple matching
+                     const filename = f.name.split('/').pop()!;
+                     const url = URL.createObjectURL(f.blob);
+                     newAssets[filename] = url;
+                 }
             });
-            
-            await Promise.all(meshPromises);
+            await Promise.all(assetPromises);
 
             // Cleanup old assets
             Object.values(assets).forEach(url => URL.revokeObjectURL(url));
             
             setAssets(newAssets);
             setRobot(newState);
-            setAppMode('skeleton'); // Reset view
+            setAppMode('skeleton');
         } else {
             alert("Failed to parse URDF.");
+        }
+    };
+
+    try {
+        // Mode 1: Single ZIP file
+        if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
+            const zip = await JSZip.loadAsync(files[0]);
+            
+            let urdfFile: { name: string, content: string } | null = null;
+            const assetFiles: { name: string, blob: Blob }[] = [];
+            const libraryFiles: { path: string, content: string }[] = [];
+
+            // Iterate ZIP
+            const promises: Promise<void>[] = [];
+            zip.forEach((relativePath, fileEntry) => {
+                if (fileEntry.dir) return;
+                
+                const lowerPath = relativePath.toLowerCase();
+                const p = (async () => {
+                    if (lowerPath.endsWith('.urdf')) {
+                        const content = await fileEntry.async("string");
+                        if (!urdfFile) urdfFile = { name: relativePath, content };
+                    } else if (lowerPath.includes('motor library') && lowerPath.endsWith('.txt')) {
+                        const content = await fileEntry.async("string");
+                        libraryFiles.push({ path: relativePath, content });
+                    } else {
+                        // Assume asset
+                        const blob = await fileEntry.async("blob");
+                        assetFiles.push({ name: relativePath, blob });
+                    }
+                })();
+                promises.push(p);
+            });
+            await Promise.all(promises);
+
+            // Use the generic processor
+            await processVirtualFS(urdfFile!, assetFiles, libraryFiles);
+
+        } else {
+            // Mode 2: Multiple Files (Folder upload or Multi-select)
+            const fileList = Array.from(files);
+            
+            let urdfFile: { name: string, content: string } | null = null;
+            const assetFiles: { name: string, blob: Blob }[] = [];
+            const libraryFiles: { path: string, content: string }[] = [];
+
+            const promises = fileList.map(async f => {
+                const lowerName = f.name.toLowerCase();
+                // Note: file.webkitRelativePath gives path if directory upload, else just empty or filename
+                const path = f.webkitRelativePath || f.name;
+
+                if (lowerName.endsWith('.urdf')) {
+                    const content = await f.text();
+                    if (!urdfFile) urdfFile = { name: path, content };
+                } else if (path.includes('motor library') && lowerName.endsWith('.txt')) {
+                    const content = await f.text();
+                    libraryFiles.push({ path: path, content });
+                } else {
+                    assetFiles.push({ name: path, blob: f });
+                }
+            });
+            await Promise.all(promises);
+
+            await processVirtualFS(urdfFile!, assetFiles, libraryFiles);
         }
 
     } catch (error: any) {
         console.error("Import failed:", error);
-        alert("Failed to import package. Ensure it is a valid zip file.");
+        alert("Failed to import. Please check if the file(s) are valid.");
     } finally {
         if (importInputRef.current) importInputRef.current.value = "";
     }
@@ -378,10 +418,13 @@ export default function App() {
     <div className="flex flex-col h-screen bg-slate-950 text-slate-200 font-sans">
       <input 
         type="file" 
-        accept=".zip" 
+        // Accept common 3D formats and archives, plus any for wide compatibility
+        // Removing specific accept to ensure user can select whatever they want
         ref={importInputRef} 
         onChange={handleImport} 
         className="hidden" 
+        multiple
+        {...({ webkitdirectory: "", directory: "" } as any)}
       />
 
       {/* Header */}
@@ -446,14 +489,14 @@ export default function App() {
                 onClick={() => importInputRef.current?.click()}
                 className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded text-sm transition-colors"
             >
-                <Upload className="w-4 h-4" />
+                <Download className="w-4 h-4" />
                 {t.import}
             </button>
             <button 
                 onClick={handleExport}
                 className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm transition-colors"
             >
-                <Download className="w-4 h-4" />
+                <Upload className="w-4 h-4" />
                 {t.export}
             </button>
         </div>
