@@ -10,7 +10,7 @@ import { parseURDF } from './services/urdfParser';
 import { generateRobotFromPrompt } from './services/geminiService';
 import { DEFAULT_MOTOR_LIBRARY } from './services/motorLibrary';
 import { translations, Language } from './services/i18n';
-import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe } from 'lucide-react';
+import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ChevronDown, FileJson, Folder } from 'lucide-react';
 import JSZip from 'jszip';
 
 const INITIAL_ID = 'base_link';
@@ -33,6 +33,7 @@ export default function App() {
   const [assets, setAssets] = useState<Record<string, string>>({});
   const [motorLibrary, setMotorLibrary] = useState<Record<string, MotorSpec[]>>(DEFAULT_MOTOR_LIBRARY);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   // Language State
   const [lang, setLang] = useState<Language>('en');
@@ -466,8 +467,110 @@ export default function App() {
       }
   };
 
+  // --- Drag and Drop Handlers ---
+
+  const traverseFileTree = async (item: any, path = ""): Promise<File[]> => {
+      if (item.isFile) {
+          return new Promise((resolve) => {
+              item.file((file: File) => {
+                  // Add webkitRelativePath property manually if missing, or just rely on path
+                  // We can't easily modify File object properties, but we can wrap it or just return it.
+                  // However, our logic uses f.name or f.webkitRelativePath.
+                  // Let's try to define a property on the file object if possible, or return a wrapper.
+                  // Actually, for our logic, we just need the file content and a way to know its path.
+                  // But our handleImport logic expects File objects.
+                  // Let's attach the path to the file object as a custom property if needed, 
+                  // but standard File object from drag-drop usually has empty webkitRelativePath.
+                  // We can use a custom property or just rely on the fact that we are building a list.
+                  // Wait, handleImport logic uses `f.webkitRelativePath || f.name`.
+                  // If we can't set webkitRelativePath, we might need to adjust handleImport to accept a structure.
+                  // BUT, to minimize changes, let's see if we can define the property.
+                  Object.defineProperty(file, 'webkitRelativePath', {
+                      value: path + file.name
+                  });
+                  resolve([file]);
+              });
+          });
+      } else if (item.isDirectory) {
+          const dirReader = item.createReader();
+          const entries: any[] = [];
+          
+          const readEntries = async (): Promise<any[]> => {
+              return new Promise((resolve, reject) => {
+                  dirReader.readEntries((results: any[]) => {
+                      if (results.length) {
+                          entries.push(...results);
+                          resolve(readEntries()); // Recursively read until empty
+                      } else {
+                          resolve(entries);
+                      }
+                  }, (error: any) => reject(error));
+              });
+          };
+
+          await readEntries();
+          
+          const files: File[] = [];
+          for (const entry of entries) {
+              const nestedFiles = await traverseFileTree(entry, path + item.name + "/");
+              files.push(...nestedFiles);
+          }
+          return files;
+      }
+      return [];
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragOver(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragOver(false);
+
+      const items = e.dataTransfer.items;
+      if (!items) return;
+
+      const files: File[] = [];
+      const promises: Promise<File[]>[] = [];
+
+      for (let i = 0; i < items.length; i++) {
+          const item = items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
+          if (item) {
+              promises.push(traverseFileTree(item));
+          } else {
+              // Fallback for non-webkit browsers or if getAsEntry fails
+              const file = items[i].getAsFile();
+              if (file) files.push(file);
+          }
+      }
+
+      const nestedFiles = await Promise.all(promises);
+      nestedFiles.forEach(fileList => files.push(...fileList));
+
+      if (files.length > 0) {
+          // Create a synthetic event to reuse handleImport
+          const syntheticEvent = {
+              target: { files: files }
+          } as unknown as React.ChangeEvent<HTMLInputElement>;
+          
+          handleImport(syntheticEvent);
+      }
+  };
+
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-200 font-sans">
+    <div 
+        className={`flex flex-col h-screen bg-slate-950 text-slate-200 font-sans ${isDragOver ? 'ring-4 ring-blue-500 ring-inset' : ''}`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+    >
       <input 
         type="file" 
         // Accept common 3D formats and archives, plus any for wide compatibility
@@ -476,7 +579,8 @@ export default function App() {
         onChange={handleImport} 
         className="hidden" 
         multiple
-        {...({ webkitdirectory: "", directory: "" } as any)}
+        // Removed webkitdirectory to allow file selection (including zip). 
+        // Folder upload is supported via Drag & Drop.
       />
 
       {/* Header */}
@@ -540,6 +644,7 @@ export default function App() {
             <button 
                 onClick={() => importInputRef.current?.click()}
                 className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded text-sm transition-colors"
+                title={t.import}
             >
                 <Download className="w-4 h-4" />
                 {t.import}
