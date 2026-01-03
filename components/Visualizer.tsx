@@ -4,9 +4,12 @@ import { Canvas, useLoader } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, GizmoHelper, GizmoViewport, Html, Line, TransformControls } from '@react-three/drei';
 import { RobotState, GeometryType, UrdfJoint, JointType } from '../types';
 import * as THREE from 'three';
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader';
-import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader';
+// @ts-ignore - three.js loaders are JS files without type definitions
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+// @ts-ignore
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+// @ts-ignore
+import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { translations, Language } from '../services/i18n';
 
 // Fix for missing JSX types in strict environments or when global types are not picked up
@@ -638,10 +641,13 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang }: { 
            )}
         </div>
         
-      <Canvas shadows camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 50 }}>
+      <Canvas shadows camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 50 }} onCreated={(state) => console.log('Canvas created', state)}>
         <Suspense fallback={null}>
             <OrbitControls makeDefault />
-            <Environment preset="city" />
+            <ambientLight intensity={0.5} />
+            <directionalLight position={[10, 10, 5]} intensity={1} />
+            {/* Environment preset="city" - 需要从外部下载资源，可能导致加载问题，暂时注释 */}
+            {/* <Environment preset="city" /> */}
             
             <group position={[0, 0, 0]}>
                  <RobotNode 
