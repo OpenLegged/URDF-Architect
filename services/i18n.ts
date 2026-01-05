@@ -114,7 +114,13 @@ export const translations = {
     suggestion: "Suggestion",
     inspectionItems: "Inspection Items",
     downloadReport: "Download Report",
-    downloadReportPDF: "Download PDF Report"
+    downloadReportPDF: "Download PDF Report",
+    retestItem: "Retest",
+    fixWithAI: "Fix with AI",
+    chatWithAI: "Chat with AI",
+    chatPlaceholder: "Ask about URDF issues...",
+    sendMessage: "Send",
+    chatTitle: "AI Assistant"
   },
   zh: {
     // Header
@@ -228,6 +234,12 @@ export const translations = {
         suggestion: "建议",
         inspectionItems: "检查项目",
         downloadReport: "下载报告",
-        downloadReportPDF: "下载PDF报告"
+        downloadReportPDF: "下载PDF报告",
+        retestItem: "重新测试",
+        fixWithAI: "AI修复",
+        chatWithAI: "与AI对话",
+        chatPlaceholder: "询问URDF问题...",
+        sendMessage: "发送",
+        chatTitle: "AI助手"
   }
 };

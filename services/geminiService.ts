@@ -551,15 +551,46 @@ ${criteriaDescription}
       };
     }
 
+    console.log("[Inspection] Raw response content:", content.substring(0, 200) + "...");
+
     let result;
     try {
       result = JSON.parse(content);
     } catch (parseError: any) {
       console.error("Failed to parse inspection JSON", parseError);
-      return {
-        summary: "Failed to parse inspection results.",
-        issues: [{ type: 'error', title: "Parse Error", description: `Failed to parse JSON: ${parseError?.message || 'unknown error'}` }]
-      };
+      console.error("Content that failed to parse:", content);
+      
+      // Fallback: try to extract JSON from markdown code blocks
+      const jsonBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (jsonBlockMatch) {
+        try {
+          result = JSON.parse(jsonBlockMatch[1]);
+          console.log("[Inspection] Successfully parsed JSON from code block");
+        } catch (e) {
+          console.error("Failed to parse JSON from code block", e);
+        }
+      }
+      
+      // Fallback: try to extract JSON by finding first { and last }
+      if (!result) {
+        const firstOpen = content.indexOf('{');
+        const lastClose = content.lastIndexOf('}');
+        if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+          try {
+            result = JSON.parse(content.substring(firstOpen, lastClose + 1));
+            console.log("[Inspection] Successfully parsed JSON from extracted substring");
+          } catch (e) {
+            console.error("Failed to parse JSON from extracted substring", e);
+          }
+        }
+      }
+      
+      if (!result) {
+        return {
+          summary: "Failed to parse inspection results.",
+          issues: [{ type: 'error', title: "Parse Error", description: `Failed to parse JSON: ${parseError?.message || 'unknown error'}\n\n原始响应: ${content.substring(0, 500)}` }]
+        };
+      }
     }
 
     // 处理返回的 issues，确保包含评分信息

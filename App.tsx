@@ -3,7 +3,7 @@ import React, { useState, useRef } from 'react';
 import { TreeEditor } from './components/TreeEditor';
 import { PropertyEditor } from './components/PropertyEditor';
 import { Visualizer } from './components/Visualizer';
-import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec, InspectionReport } from './types';
+import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec, InspectionReport, InspectionIssue } from './types';
 import { generateURDF } from './services/urdfGenerator';
 import { generateMujocoXML } from './services/mujocoGenerator';
 import { parseURDF } from './services/urdfParser';
@@ -11,7 +11,7 @@ import { generateRobotFromPrompt, runRobotInspection } from './services/geminiSe
 import { DEFAULT_MOTOR_LIBRARY } from './services/motorLibrary';
 import { translations, Language } from './services/i18n';
 import { INSPECTION_CRITERIA, getInspectionCategory } from './services/inspectionCriteria';
-import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight, FileText } from 'lucide-react';
+import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight, FileText, RefreshCw, Wand2, MessageCircle, Send, Minimize2, Maximize2 } from 'lucide-react';
 import JSZip from 'jszip';
 import jsPDF from 'jspdf';
 
@@ -68,6 +68,14 @@ export default function App() {
   } | null>(null);
   // Report generation timer
   const [reportGenerationTimer, setReportGenerationTimer] = useState<number | null>(null);
+  // Chat dialog state
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isChatMinimized, setIsChatMinimized] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatGenerating, setIsChatGenerating] = useState(false);
+  // Single item retest state
+  const [retestingItem, setRetestingItem] = useState<{ categoryId: string; itemId: string } | null>(null);
 
   // --- Actions ---
 
@@ -569,6 +577,114 @@ export default function App() {
       });
   };
 
+  // Handle single item retest
+  const handleRetestItem = async (categoryId: string, itemId: string) => {
+    setRetestingItem({ categoryId, itemId });
+    try {
+      const selectedItemsMap: Record<string, string[]> = {
+        [categoryId]: [itemId]
+      };
+      
+      const report = await runRobotInspection(robot, selectedItemsMap, lang);
+      if (report && inspectionReport) {
+        // 更新现有报告，只更新该检测项相关的issues
+        const updatedIssues = inspectionReport.issues.filter(issue => 
+          !(issue.category === categoryId && issue.itemId === itemId)
+        );
+        // 添加新的检测结果
+        const newIssues = report.issues.filter(issue => 
+          issue.category === categoryId && issue.itemId === itemId
+        );
+        const allIssues = [...updatedIssues, ...newIssues];
+        
+        // 重新计算分数
+        const categoryScores: Record<string, number> = { ...inspectionReport.categoryScores };
+        const categoryIssues = allIssues.filter(i => i.category === categoryId);
+        if (categoryIssues.length > 0) {
+          const scores = categoryIssues.map(i => i.score ?? 10);
+          categoryScores[categoryId] = scores.reduce((a, b) => a + b, 0) / scores.length;
+        }
+        
+        const allScores = allIssues.map(i => i.score ?? 10);
+        const overallScore = allScores.reduce((a, b) => a + b, 0);
+        
+        setInspectionReport({
+          ...inspectionReport,
+          issues: allIssues,
+          categoryScores,
+          overallScore,
+          maxScore: inspectionReport.maxScore || 100
+        });
+      }
+    } catch (e) {
+      console.error("Retest Error", e);
+    } finally {
+      setRetestingItem(null);
+    }
+  };
+
+  // Handle AI fix for a specific issue
+  const handleFixIssue = async (issue: InspectionIssue) => {
+    if (!issue.category || !issue.itemId) return;
+    
+    setIsGeneratingAI(true);
+    try {
+      const category = INSPECTION_CRITERIA.find(c => c.id === issue.category);
+      const item = category?.items.find(i => i.id === issue.itemId);
+      const itemName = lang === 'zh' ? item?.nameZh : item?.name;
+      const categoryName = lang === 'zh' ? category?.nameZh : category?.name;
+      
+      const prompt = lang === 'zh' 
+        ? `请修复以下URDF问题：\n\n问题类别：${categoryName}\n检查项：${itemName}\n问题描述：${issue.title}\n${issue.description}\n\n相关的链接/关节ID：${issue.relatedIds?.join(', ') || '无'}\n\n请直接修复这个问题，返回完整的修复后的机器人结构。`
+        : `Please fix the following URDF issue:\n\nCategory: ${categoryName}\nItem: ${itemName}\nIssue: ${issue.title}\n${issue.description}\n\nRelated link/joint IDs: ${issue.relatedIds?.join(', ') || 'none'}\n\nPlease fix this issue directly and return the complete fixed robot structure.`;
+      
+      const response = await generateRobotFromPrompt(prompt, robot, motorLibrary);
+      if (response?.data) {
+        setAiResponse({
+          explanation: response.explanation || (lang === 'zh' ? '修复完成，请查看并应用更改。' : 'Fix completed. Please review and apply changes.'),
+          type: response.actionType || 'modification',
+          data: response.robotData
+        });
+        setIsAIModalOpen(true);
+      } else {
+        alert(lang === 'zh' ? '修复失败，请重试。' : 'Fix failed, please try again.');
+      }
+    } catch (e) {
+      console.error("Fix Error", e);
+      alert(lang === 'zh' ? '修复过程中出错。' : 'Error during fix.');
+    } finally {
+      setIsGeneratingAI(false);
+    }
+  };
+
+  // Handle chat message
+  const handleChatSend = async () => {
+    if (!chatInput.trim() || isChatGenerating) return;
+    
+    const userMessage = chatInput.trim();
+    setChatInput('');
+    setChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setIsChatGenerating(true);
+    
+    try {
+      const contextPrompt = lang === 'zh'
+        ? `当前机器人结构：\n${JSON.stringify(robot, null, 2)}\n\n${inspectionReport ? `当前检测报告摘要：\n${inspectionReport.summary}\n问题列表：\n${inspectionReport.issues.map(i => `- ${i.title}: ${i.description}`).join('\n')}\n\n` : ''}用户问题：${userMessage}\n\n请回答用户关于URDF的问题，提供建议和帮助。`
+        : `Current robot structure:\n${JSON.stringify(robot, null, 2)}\n\n${inspectionReport ? `Current inspection report summary:\n${inspectionReport.summary}\nIssues:\n${inspectionReport.issues.map(i => `- ${i.title}: ${i.description}`).join('\n')}\n\n` : ''}User question: ${userMessage}\n\nPlease answer the user's question about URDF and provide suggestions and help.`;
+      
+      const response = await generateRobotFromPrompt(contextPrompt, robot, motorLibrary);
+      const assistantMessage = response?.explanation || (lang === 'zh' ? '抱歉，无法生成回复。' : 'Sorry, unable to generate response.');
+      setChatMessages(prev => [...prev, { role: 'assistant', content: assistantMessage }]);
+    } catch (e) {
+      console.error("Chat Error", e);
+      setChatMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: lang === 'zh' ? '发送消息时出错，请重试。' : 'Error sending message, please try again.' 
+      }]);
+    } finally {
+      setIsChatGenerating(false);
+    }
+  };
+
   const applyAIChanges = () => {
       console.log('[Apply Changes] aiResponse:', aiResponse);
       console.log('[Apply Changes] aiResponse.data:', aiResponse?.data);
@@ -953,14 +1069,42 @@ export default function App() {
                                                    titleColor = "text-blue-300";
                                                }
 
+                                               const isRetesting = retestingItem?.categoryId === issue.category && retestingItem?.itemId === issue.itemId;
+                                               
                                                return (
                                                    <div key={idx} className={`p-3 rounded border flex gap-3 ${colorClass}`}>
                                                        <div className="mt-0.5 shrink-0">{icon}</div>
                                                        <div className="flex-1">
                                                            <div className="flex items-center justify-between mb-1">
                                                                <div className={`text-sm font-bold ${titleColor}`}>{issue.title}</div>
-                                                               <div className={`text-xs font-bold ${getScoreColor(issueScore)}`}>
-                                                                   {issueScore.toFixed(1)}/10
+                                                               <div className="flex items-center gap-2">
+                                                                   <div className={`text-xs font-bold ${getScoreColor(issueScore)}`}>
+                                                                       {issueScore.toFixed(1)}/10
+                                                                   </div>
+                                                                   {issue.category && issue.itemId && (
+                                                                       <div className="flex items-center gap-1">
+                                                                           <button
+                                                                               onClick={() => handleRetestItem(issue.category!, issue.itemId!)}
+                                                                               disabled={isRetesting || isGeneratingAI}
+                                                                               className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[10px] rounded transition-colors disabled:opacity-50 flex items-center gap-1"
+                                                                               title={t.retestItem}
+                                                                           >
+                                                                               {isRetesting ? (
+                                                                                   <Loader2 className="w-3 h-3 animate-spin" />
+                                                                               ) : (
+                                                                                   <RefreshCw className="w-3 h-3" />
+                                                                               )}
+                                                                           </button>
+                                                                           <button
+                                                                               onClick={() => handleFixIssue(issue)}
+                                                                               disabled={isGeneratingAI}
+                                                                               className="px-2 py-1 bg-purple-600 hover:bg-purple-500 text-white text-[10px] rounded transition-colors disabled:opacity-50 flex items-center gap-1"
+                                                                               title={t.fixWithAI}
+                                                                           >
+                                                                               <Wand2 className="w-3 h-3" />
+                                                                           </button>
+                                                                       </div>
+                                                                   )}
                                                                </div>
                                                            </div>
                                                            <div className="text-xs text-slate-400 leading-relaxed">{issue.description}</div>
@@ -1434,6 +1578,114 @@ export default function App() {
                   )}
               </div>
           </div>
+      )}
+
+      {/* Chat Dialog - Bottom Right */}
+      {isChatOpen && (
+        <div className={`fixed bottom-4 right-4 z-50 flex flex-col bg-slate-900/95 backdrop-blur-md shadow-2xl rounded-lg border border-slate-600 ${isChatMinimized ? 'w-80' : 'w-96'} ${isChatMinimized ? 'h-12' : 'h-[500px]'} transition-all`}>
+          <div className="flex items-center justify-between p-3 border-b border-slate-700 shrink-0 bg-slate-800/50 rounded-t-lg">
+            <div className="flex items-center gap-2">
+              <MessageCircle className="w-4 h-4 text-purple-400" />
+              <h3 className="text-sm font-bold text-white">{t.chatTitle}</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsChatMinimized(!isChatMinimized)}
+                className="text-slate-400 hover:text-white"
+              >
+                {isChatMinimized ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={() => {
+                  setIsChatOpen(false);
+                  setIsChatMinimized(false);
+                  setChatMessages([]);
+                  setChatInput('');
+                }}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {!isChatMinimized && (
+            <>
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                {chatMessages.length === 0 ? (
+                  <div className="text-sm text-slate-400 text-center py-8">
+                    {lang === 'zh' ? '开始与AI对话，讨论URDF问题...' : 'Start a conversation with AI to discuss URDF issues...'}
+                  </div>
+                ) : (
+                  chatMessages.map((msg, idx) => (
+                    <div
+                      key={idx}
+                      className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-[80%] rounded-lg p-3 ${
+                          msg.role === 'user'
+                            ? 'bg-purple-600 text-white'
+                            : 'bg-slate-800 text-slate-200'
+                        }`}
+                      >
+                        <div className="text-xs whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                      </div>
+                    </div>
+                  ))
+                )}
+                {isChatGenerating && (
+                  <div className="flex justify-start">
+                    <div className="bg-slate-800 rounded-lg p-3">
+                      <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 border-t border-slate-700 shrink-0">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleChatSend();
+                      }
+                    }}
+                    placeholder={t.chatPlaceholder}
+                    className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-200 text-sm focus:border-purple-500 focus:outline-none"
+                    disabled={isChatGenerating}
+                  />
+                  <button
+                    onClick={handleChatSend}
+                    disabled={isChatGenerating || !chatInput.trim()}
+                    className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded transition-colors flex items-center gap-2"
+                  >
+                    {isChatGenerating ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Send className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Chat Button - Bottom Right */}
+      {!isChatOpen && (
+        <button
+          onClick={() => setIsChatOpen(true)}
+          className="fixed bottom-4 right-4 z-40 w-14 h-14 bg-purple-600 hover:bg-purple-500 text-white rounded-full shadow-lg flex items-center justify-center transition-colors"
+          title={t.chatWithAI}
+        >
+          <MessageCircle className="w-6 h-6" />
+        </button>
       )}
     </div>
   );
