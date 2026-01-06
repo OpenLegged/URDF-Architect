@@ -4,7 +4,7 @@ export type Language = 'en' | 'zh';
 export const translations = {
   en: {
     // Header
-    appName: "UrdfArchitect",
+    appName: "URDF Studio",
     skeleton: "Skeleton",
     detail: "Detail",
     hardware: "Hardware",
@@ -97,11 +97,36 @@ export const translations = {
     applyChanges: "Apply Changes",
     cancel: "Cancel",
     send: "Send",
-    thinking: "Thinking..."
+    thinking: "Thinking...",
+    
+    // AI Inspector
+    inspectionItems: "Inspection Items",
+    runInspection: "Run Inspection",
+    overallScore: "Overall Score",
+    downloadReport: "Download",
+    downloadReportPDF: "Download Report as PDF",
+    inspectorSummary: "Summary",
+    retestItem: "Retest",
+    chatTitle: "Chat with AI",
+    chatPlaceholder: "Ask a question...",
+    chatWithAI: "Chat with AI",
+    
+    // Additional UI
+    collapseSidebar: "Collapse sidebar",
+    switchUnit: "Switch Unit",
+    showJointControls: "Show Joint Controls",
+    showVisual: "Show Visual",
+    showCenterOfMass: "Show Center of Mass",
+    jointControls: "Joint Controls",
+    viewOptions: "View Options",
+    loadingRobot: "Loading robot...",
+    enterRobotName: "Enter robot name...",
+    enterMotorType: "Enter motor type...",
+    modeLabel: "Mode"
   },
   zh: {
     // Header
-    appName: "UrdfArchitect",
+    appName: "URDF Studio",
     skeleton: "骨架",
     detail: "细节",
     hardware: "硬件",
@@ -194,6 +219,29 @@ export const translations = {
     applyChanges: "应用更改",
     cancel: "取消",
     send: "发送",
-    thinking: "思考中..."
+    thinking: "思考中...",
+        // AI Inspector
+    inspectionItems: "检查项目",
+    runInspection: "运行检查",
+    overallScore: "总分",
+    downloadReport: "下载",
+    downloadReportPDF: "下载报告 PDF",
+    inspectorSummary: "总结",
+    retestItem: "重新检查",
+    chatTitle: "与 AI 对话",
+    chatPlaceholder: "输入问题...",
+    chatWithAI: "与 AI 对话",
+        // Additional UI
+    collapseSidebar: "收起侧栏",
+    switchUnit: "切换单位",
+    showJointControls: "显示关节控制",
+    showVisual: "显示可视化",
+    showCenterOfMass: "显示质心",
+    jointControls: "关节控制",
+    viewOptions: "视图选项",
+    loadingRobot: "加载机器人中...",
+    enterRobotName: "输入机器人名称...",
+    enterMotorType: "输入电机型号...",
+    modeLabel: "模式"
   }
 };
