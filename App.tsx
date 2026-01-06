@@ -3,7 +3,7 @@ import React, { useState, useRef } from 'react';
 import { TreeEditor } from './components/TreeEditor';
 import { PropertyEditor } from './components/PropertyEditor';
 import { Visualizer } from './components/Visualizer';
-import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec, InspectionReport } from './types';
+import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec, InspectionReport, InspectionIssue } from './types';
 import { generateURDF } from './services/urdfGenerator';
 import { generateMujocoXML } from './services/mujocoGenerator';
 import { parseURDF } from './services/urdfParser';
@@ -11,8 +11,9 @@ import { generateRobotFromPrompt, runRobotInspection } from './services/geminiSe
 import { DEFAULT_MOTOR_LIBRARY } from './services/motorLibrary';
 import { translations, Language } from './services/i18n';
 import { INSPECTION_CRITERIA, getInspectionCategory } from './services/inspectionCriteria';
-import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight } from 'lucide-react';
+import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight, FileText, RefreshCw, MessageCircle, Send } from 'lucide-react';
 import JSZip from 'jszip';
+import jsPDF from 'jspdf';
 
 const INITIAL_ID = 'base_link';
 
@@ -65,6 +66,15 @@ export default function App() {
     completed: number;
     total: number;
   } | null>(null);
+  // Report generation timer
+  const [reportGenerationTimer, setReportGenerationTimer] = useState<number | null>(null);
+  // Chat state for inspection report
+  const [isReportChatOpen, setIsReportChatOpen] = useState(false);
+  const [reportChatMessages, setReportChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const [reportChatInput, setReportChatInput] = useState('');
+  const [isChatGenerating, setIsChatGenerating] = useState(false);
+  // Single item retest state
+  const [retestingItem, setRetestingItem] = useState<{ categoryId: string; itemId: string } | null>(null);
 
   // --- Actions ---
 
@@ -399,6 +409,7 @@ export default function App() {
       setIsGeneratingAI(true);
       setAiResponse(null);
       setInspectionReport(null);
+      setReportGenerationTimer(null);
       
       // 计算总检查项数量和列表
       let totalItems = 0;
@@ -411,7 +422,8 @@ export default function App() {
           items.forEach(itemId => {
               const item = category.items.find(i => i.id === itemId);
               if (item) {
-                  selectedItemsList.push({ categoryId, itemId, categoryName, itemName: item.name });
+                  const itemName = lang === 'zh' ? item.nameZh : item.name;
+                  selectedItemsList.push({ categoryId, itemId, categoryName, itemName });
                   totalItems++;
               }
           });
@@ -432,6 +444,10 @@ export default function App() {
       try {
           // 模拟逐条检查进度
           let currentIndex = 0;
+          let reportReady = false;
+          let generatedReport: InspectionReport | null = null;
+          let timerInterval: NodeJS.Timeout | null = null;
+          
           const progressInterval = setInterval(() => {
               currentIndex++;
               if (currentIndex <= totalItems) {
@@ -444,31 +460,82 @@ export default function App() {
                   });
               } else {
                   clearInterval(progressInterval);
+                  
+                  // 所有检查项完成后，立即开始计时并启动AI报告生成
+                  setInspectionProgress({
+                      currentCategory: undefined,
+                      currentItem: undefined,
+                      completed: totalItems,
+                      total: totalItems
+                  });
+                  
+                  // 立即启动报告生成计时器（从1秒开始，预计30秒）
+                  setReportGenerationTimer(1);
+                  let timerCount = 1;
+                  
+                  const showReport = () => {
+                      if (timerInterval) {
+                          clearInterval(timerInterval);
+                          timerInterval = null;
+                      }
+                      setInspectionProgress(null);
+                      setReportGenerationTimer(null);
+                      if (generatedReport) {
+                          setInspectionReport(generatedReport);
+                      }
+                  };
+                  
+                  timerInterval = setInterval(() => {
+                      timerCount++;
+                      setReportGenerationTimer(timerCount);
+                      
+                      // 如果计时器到30秒，显示报告（无论是否准备好）
+                      if (timerCount >= 30) {
+                          clearInterval(timerInterval!);
+                          timerInterval = null;
+                          if (reportReady) {
+                              // 报告已准备好，立即显示
+                              showReport();
+                          } else {
+                              // 报告还没准备好，等待报告
+                              setReportGenerationTimer(null);
+                              const checkReport = setInterval(() => {
+                                  if (reportReady) {
+                                      clearInterval(checkReport);
+                                      showReport();
+                                  }
+                              }, 100);
+                          }
+                      }
+                  }, 1000); // 每秒更新一次
+                  
+                  // 在后台生成报告（不阻塞UI）
+                  runRobotInspection(robot, selectedItemsMap, lang).then(report => {
+                      generatedReport = report;
+                      reportReady = true;
+                      // 如果报告在30秒内完成，立即显示（提前显示）
+                      if (timerCount < 30 && timerInterval) {
+                          clearInterval(timerInterval);
+                          timerInterval = null;
+                          showReport();
+                      } else if (timerCount >= 30) {
+                          // 如果计时器已经到30秒，立即显示报告
+                          showReport();
+                      }
+                  }).catch(e => {
+                      console.error("Inspection Error", e);
+                      if (timerInterval) {
+                          clearInterval(timerInterval);
+                      }
+                      setInspectionProgress(null);
+                      setReportGenerationTimer(null);
+                  });
               }
           }, 300); // 每300ms更新一次进度
-          
-          const report = await runRobotInspection(robot, selectedItemsMap);
-          
-          clearInterval(progressInterval);
-          
-          // 完成所有检查
-          setInspectionProgress({
-              currentCategory: undefined,
-              currentItem: undefined,
-              completed: totalItems,
-              total: totalItems
-          });
-          
-          // 短暂延迟后清除进度显示并显示结果
-          setTimeout(() => {
-              setInspectionProgress(null);
-              if (report) {
-                  setInspectionReport(report);
-              }
-          }, 500);
       } catch(e: any) {
           console.error("Inspection Error", e);
           setInspectionProgress(null);
+          setReportGenerationTimer(null);
       } finally {
           setIsGeneratingAI(false);
       }
@@ -507,6 +574,80 @@ export default function App() {
           newItems[categoryId] = itemSet;
           return newItems;
       });
+  };
+
+  // Handle single item retest
+  const handleRetestItem = async (categoryId: string, itemId: string) => {
+    setRetestingItem({ categoryId, itemId });
+    try {
+      const selectedItemsMap: Record<string, string[]> = {
+        [categoryId]: [itemId]
+      };
+      
+      const report = await runRobotInspection(robot, selectedItemsMap, lang);
+      if (report && inspectionReport) {
+        // 更新现有报告，只更新该检测项相关的issues
+        const updatedIssues = inspectionReport.issues.filter(issue => 
+          !(issue.category === categoryId && issue.itemId === itemId)
+        );
+        // 添加新的检测结果
+        const newIssues = report.issues.filter(issue => 
+          issue.category === categoryId && issue.itemId === itemId
+        );
+        const allIssues = [...updatedIssues, ...newIssues];
+        
+        // 重新计算分数
+        const categoryScores: Record<string, number> = { ...inspectionReport.categoryScores };
+        const categoryIssues = allIssues.filter(i => i.category === categoryId);
+        if (categoryIssues.length > 0) {
+          const scores = categoryIssues.map(i => i.score ?? 10);
+          categoryScores[categoryId] = scores.reduce((a, b) => a + b, 0) / scores.length;
+        }
+        
+        const allScores = allIssues.map(i => i.score ?? 10);
+        const overallScore = allScores.reduce((a, b) => a + b, 0);
+        
+        setInspectionReport({
+          ...inspectionReport,
+          issues: allIssues,
+          categoryScores,
+          overallScore,
+          maxScore: inspectionReport.maxScore || 100
+        });
+      }
+    } catch (e) {
+      console.error("Retest Error", e);
+    } finally {
+      setRetestingItem(null);
+    }
+  };
+
+  // Handle chat message for inspection report
+  const handleReportChatSend = async () => {
+    if (!reportChatInput.trim() || isChatGenerating || !inspectionReport) return;
+    
+    const userMessage = reportChatInput.trim();
+    setReportChatInput('');
+    setReportChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setIsChatGenerating(true);
+    
+    try {
+      const contextPrompt = lang === 'zh'
+        ? `当前机器人结构：\n${JSON.stringify(robot, null, 2)}\n\n检测报告摘要：\n${inspectionReport.summary}\n\n检测报告中的问题列表：\n${inspectionReport.issues.map(i => `- ${i.title} (${i.type}): ${i.description}${i.relatedIds ? ` [相关ID: ${i.relatedIds.join(', ')}]` : ''}`).join('\n')}\n\n用户问题：${userMessage}\n\n请回答用户关于检测报告中问题的询问，提供详细的解释、原因分析和建议。`
+        : `Current robot structure:\n${JSON.stringify(robot, null, 2)}\n\nInspection report summary:\n${inspectionReport.summary}\n\nIssues in inspection report:\n${inspectionReport.issues.map(i => `- ${i.title} (${i.type}): ${i.description}${i.relatedIds ? ` [Related IDs: ${i.relatedIds.join(', ')}]` : ''}`).join('\n')}\n\nUser question: ${userMessage}\n\nPlease answer the user's question about issues in the inspection report, providing detailed explanations, cause analysis, and suggestions.`;
+      
+      const response = await generateRobotFromPrompt(contextPrompt, robot, motorLibrary);
+      const assistantMessage = response?.explanation || (lang === 'zh' ? '抱歉，无法生成回复。' : 'Sorry, unable to generate response.');
+      setReportChatMessages(prev => [...prev, { role: 'assistant', content: assistantMessage }]);
+    } catch (e) {
+      console.error("Chat Error", e);
+      setReportChatMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: lang === 'zh' ? '发送消息时出错，请重试。' : 'Error sending message, please try again.' 
+      }]);
+    } finally {
+      setIsChatGenerating(false);
+    }
   };
 
   const applyAIChanges = () => {
@@ -585,6 +726,158 @@ export default function App() {
     document.addEventListener('mouseup', handleMouseUp);
   };
 
+  const handleDownloadPDF = () => {
+      if (!inspectionReport) return;
+
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 20;
+      let yPos = margin;
+
+      // 标题
+      doc.setFontSize(20);
+      doc.setTextColor(50, 50, 50);
+      const reportTitle = lang === 'zh' ? 'URDF 机器人检查报告' : 'URDF Robot Inspection Report';
+      doc.text(reportTitle, pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+
+      // 机器人名称
+      doc.setFontSize(14);
+      doc.setTextColor(100, 100, 100);
+      const robotNameLabel = lang === 'zh' ? '机器人名称' : 'Robot Name';
+      doc.text(`${robotNameLabel}: ${robot.name}`, margin, yPos);
+      yPos += 10;
+
+      // 检查日期
+      const now = new Date();
+      const dateStr = now.toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+      const dateLabel = lang === 'zh' ? '检查日期' : 'Inspection Date';
+      doc.text(`${dateLabel}: ${dateStr}`, margin, yPos);
+      yPos += 15;
+
+      // 总分
+      const overallScore = inspectionReport.overallScore ?? 0;
+      const maxScore = inspectionReport.maxScore ?? 100;
+      doc.setFontSize(16);
+      doc.setTextColor(50, 50, 50);
+      const scoreLabel = lang === 'zh' ? '总分' : 'Overall Score';
+      doc.text(`${scoreLabel}: ${overallScore.toFixed(1)}/${maxScore}`, margin, yPos);
+      yPos += 10;
+
+      // 进度条（简化版）
+      const scorePercentage = (overallScore / maxScore) * 100;
+      const barWidth = pageWidth - 2 * margin;
+      const barHeight = 5;
+      doc.setFillColor(200, 200, 200);
+      doc.rect(margin, yPos, barWidth, barHeight, 'F');
+      
+      // 根据分数设置颜色
+      let barColor: [number, number, number] = [239, 68, 68]; // 红色
+      if (scorePercentage >= 90) {
+          barColor = [34, 197, 94]; // 绿色
+      } else if (scorePercentage >= 60) {
+          barColor = [234, 179, 8]; // 黄色
+      }
+      doc.setFillColor(...barColor);
+      doc.rect(margin, yPos, (barWidth * scorePercentage) / 100, barHeight, 'F');
+      yPos += 15;
+
+      // 总结
+      doc.setFontSize(12);
+      doc.setTextColor(50, 50, 50);
+      doc.setFont(undefined, 'bold');
+      const summaryLabel = lang === 'zh' ? '检查总结' : 'Inspection Summary';
+      doc.text(summaryLabel, margin, yPos);
+      yPos += 8;
+      doc.setFont(undefined, 'normal');
+      const summaryLines = doc.splitTextToSize(inspectionReport.summary, pageWidth - 2 * margin);
+      doc.text(summaryLines, margin, yPos);
+      yPos += summaryLines.length * 6 + 10;
+
+      // 按章节分组展示
+      const issuesByCategory: Record<string, typeof inspectionReport.issues> = {};
+      INSPECTION_CRITERIA.forEach(category => {
+        issuesByCategory[category.id] = [];
+      });
+
+      inspectionReport.issues.forEach(issue => {
+        const categoryId = issue.category || 'physical';
+        if (!issuesByCategory[categoryId]) {
+          issuesByCategory[categoryId] = [];
+        }
+        issuesByCategory[categoryId].push(issue);
+      });
+
+      INSPECTION_CRITERIA.forEach(category => {
+          // 检查是否需要新页面
+          if (yPos > pageHeight - 40) {
+              doc.addPage();
+              yPos = margin;
+          }
+
+          const categoryIssues = issuesByCategory[category.id] || [];
+          const categoryScore = inspectionReport.categoryScores?.[category.id] ?? 10;
+          const categoryName = lang === 'zh' ? category.nameZh : category.name;
+
+          // 章节标题
+          doc.setFontSize(14);
+          doc.setFont(undefined, 'bold');
+          doc.setTextColor(50, 50, 50);
+          doc.text(`${categoryName} (${categoryScore.toFixed(1)}/10)`, margin, yPos);
+          yPos += 10;
+
+          if (categoryIssues.length === 0) {
+              doc.setFontSize(10);
+              doc.setFont(undefined, 'normal');
+              doc.setTextColor(34, 197, 94);
+              const allPassedText = lang === 'zh' ? '✓ 该章节所有检查项均通过' : '✓ All checks passed for this category';
+              doc.text(allPassedText, margin + 5, yPos);
+              yPos += 8;
+          } else {
+              categoryIssues.forEach((issue, idx) => {
+                  // 检查是否需要新页面
+                  if (yPos > pageHeight - 30) {
+                      doc.addPage();
+                      yPos = margin;
+                  }
+
+                  const issueScore = issue.score ?? 10;
+                  doc.setFontSize(10);
+                  doc.setFont(undefined, 'bold');
+                  
+                  // 根据问题类型设置颜色
+                  if (issue.type === 'error') {
+                      doc.setTextColor(239, 68, 68);
+                  } else if (issue.type === 'warning') {
+                      doc.setTextColor(234, 179, 8);
+                  } else if (issue.type === 'suggestion') {
+                      doc.setTextColor(59, 130, 246);
+                  } else {
+                      doc.setTextColor(50, 50, 50);
+                  }
+
+                  const issueTitle = `${issue.type === 'error' ? '✗' : issue.type === 'warning' ? '⚠' : 'ℹ'} ${issue.title} (${issueScore.toFixed(1)}/10)`;
+                  doc.text(issueTitle, margin + 5, yPos);
+                  yPos += 6;
+
+                  doc.setFont(undefined, 'normal');
+                  doc.setTextColor(100, 100, 100);
+                  const descLines = doc.splitTextToSize(issue.description, pageWidth - 2 * margin - 10);
+                  doc.text(descLines, margin + 5, yPos);
+                  yPos += descLines.length * 5 + 5;
+              });
+          }
+          yPos += 5;
+      });
+
+      // 保存PDF
+      const fileName = lang === 'zh' 
+        ? `${robot.name}_检查报告_${dateStr.replace(/[\/\s:]/g, '_')}.pdf`
+        : `${robot.name}_inspection_report_${dateStr.replace(/[\/\s:]/g, '_')}.pdf`;
+      doc.save(fileName);
+  };
+
   const renderInspectionReport = () => {
       if (!inspectionReport) return null;
 
@@ -592,16 +885,19 @@ export default function App() {
       const maxScore = inspectionReport.maxScore ?? 100;
       const scorePercentage = (overallScore / maxScore) * 100;
 
-      // 根据分数确定颜色
-      const getScoreColor = (score: number) => {
-        if (score >= 80) return 'text-green-400';
-        if (score >= 60) return 'text-yellow-400';
+      // 根据分数确定颜色（6分以下红色，6-9黄色，9以上绿色）
+      // 注意：这是针对10分制的单项得分，总分需要按比例计算
+      const getScoreColor = (score: number, maxScoreForItem: number = 10) => {
+        const normalizedScore = (score / maxScoreForItem) * 10; // 归一化到10分制
+        if (normalizedScore >= 9) return 'text-green-400';
+        if (normalizedScore >= 6) return 'text-yellow-400';
         return 'text-red-400';
       };
 
-      const getScoreBgColor = (score: number) => {
-        if (score >= 80) return 'bg-green-500';
-        if (score >= 60) return 'bg-yellow-500';
+      const getScoreBgColor = (score: number, maxScoreForItem: number = 10) => {
+        const normalizedScore = (score / maxScoreForItem) * 10; // 归一化到10分制
+        if (normalizedScore >= 9) return 'bg-green-500';
+        if (normalizedScore >= 6) return 'bg-yellow-500';
         return 'bg-red-500';
       };
 
@@ -633,18 +929,28 @@ export default function App() {
 
       return (
           <div className="space-y-4">
-               {/* 总分显示 */}
+               {/* 总分显示和下载按钮 */}
                <div className="bg-gradient-to-r from-slate-800/80 to-slate-900/80 p-4 rounded-lg border border-slate-700">
                     <div className="flex items-center justify-between mb-2">
                         <div className="text-xs text-slate-400 uppercase font-bold">{t.overallScore}</div>
-                        <div className={`text-2xl font-bold ${getScoreColor(overallScore)}`}>
-                            {overallScore.toFixed(1)}/{maxScore}
+                        <div className="flex items-center gap-3">
+                            <div className={`text-2xl font-bold ${getScoreColor(overallScore, maxScore)}`}>
+                                {overallScore.toFixed(1)}/{maxScore}
+                            </div>
+                            <button
+                                onClick={handleDownloadPDF}
+                                className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm transition-colors"
+                                title={t.downloadReportPDF}
+                            >
+                                <FileText className="w-4 h-4" />
+                                <span className="text-xs">{t.downloadReport}</span>
+                            </button>
                         </div>
                     </div>
                     {/* 进度条 */}
                     <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
                         <div 
-                            className={`h-full transition-all duration-500 ${getScoreBgColor(overallScore)}`}
+                            className={`h-full transition-all duration-500 ${getScoreBgColor(overallScore, maxScore)}`}
                             style={{ width: `${scorePercentage}%` }}
                         />
                     </div>
@@ -726,16 +1032,38 @@ export default function App() {
                                                    colorClass = "bg-blue-900/20 border-blue-800/50";
                                                    icon = <Sparkles className="w-4 h-4 text-blue-500" />;
                                                    titleColor = "text-blue-300";
+                                               } else if (issue.type === 'pass') {
+                                                   colorClass = "bg-green-900/20 border-green-800/50";
+                                                   icon = <Check className="w-4 h-4 text-green-500" />;
+                                                   titleColor = "text-green-300";
                                                }
 
+                                               const isRetesting = retestingItem?.categoryId === issue.category && retestingItem?.itemId === issue.itemId;
+                                               
                                                return (
                                                    <div key={idx} className={`p-3 rounded border flex gap-3 ${colorClass}`}>
                                                        <div className="mt-0.5 shrink-0">{icon}</div>
                                                        <div className="flex-1">
                                                            <div className="flex items-center justify-between mb-1">
                                                                <div className={`text-sm font-bold ${titleColor}`}>{issue.title}</div>
-                                                               <div className={`text-xs font-bold ${getScoreColor(issueScore)}`}>
-                                                                   {issueScore.toFixed(1)}/10
+                                                               <div className="flex items-center gap-2">
+                                                                   <div className={`text-xs font-bold ${getScoreColor(issueScore)}`}>
+                                                                       {issueScore.toFixed(1)}/10
+                                                                   </div>
+                                                                   {issue.category && issue.itemId && issue.type !== 'pass' && (
+                                                                       <button
+                                                                           onClick={() => handleRetestItem(issue.category!, issue.itemId!)}
+                                                                           disabled={isRetesting || isGeneratingAI}
+                                                                           className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[10px] rounded transition-colors disabled:opacity-50 flex items-center gap-1"
+                                                                           title={t.retestItem}
+                                                                       >
+                                                                           {isRetesting ? (
+                                                                               <Loader2 className="w-3 h-3 animate-spin" />
+                                                                           ) : (
+                                                                               <RefreshCw className="w-3 h-3" />
+                                                                           )}
+                                                                       </button>
+                                                                   )}
                                                                </div>
                                                            </div>
                                                            <div className="text-xs text-slate-400 leading-relaxed">{issue.description}</div>
@@ -835,7 +1163,7 @@ export default function App() {
 
         <div className="flex items-center gap-2">
             <button
-                onClick={() => { setIsAIModalOpen(true); setAiResponse(null); setInspectionReport(null); setAiPrompt(''); }}
+                onClick={() => { setIsAIModalOpen(true); setAiResponse(null); setInspectionReport(null); setAiPrompt(''); setInspectionProgress(null); setReportGenerationTimer(null); }}
                 className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded text-sm transition-all shadow-md"
             >
                 <ScanSearch className="w-4 h-4" />
@@ -906,7 +1234,7 @@ export default function App() {
                   </div>
                   <div className="flex items-center gap-2">
                      <Move className="w-3 h-3 text-slate-500" />
-                     <button onClick={() => setIsAIModalOpen(false)} className="text-slate-400 hover:text-white">
+                     <button onClick={() => { setIsAIModalOpen(false); setInspectionProgress(null); setReportGenerationTimer(null); }} className="text-slate-400 hover:text-white">
                         <X className="w-4 h-4" />
                      </button>
                   </div>
@@ -1002,7 +1330,7 @@ export default function App() {
                                                           onChange={() => toggleItemSelection(category.id, item.id)}
                                                           className="rounded border-slate-600 bg-slate-700 text-purple-600 focus:ring-purple-500"
                                                       />
-                                                      <span className="text-[10px] text-slate-300">{item.name}</span>
+                                                      <span className="text-[10px] text-slate-300">{lang === 'zh' ? item.nameZh : item.name}</span>
                                                   </label>
                                               ))}
                                           </div>
@@ -1039,9 +1367,21 @@ export default function App() {
                                       </div>
                                   )}
                                   {inspectionProgress.completed === inspectionProgress.total && (
-                                      <div className="flex items-center gap-2 text-sm text-green-400">
-                                          <Check className="w-4 h-4" />
-                                          <span>{lang === 'zh' ? '检查完成，正在生成报告...' : 'Inspection completed, generating report...'}</span>
+                                      <div className="space-y-2">
+                                          <div className="flex items-center gap-2 text-sm text-green-400">
+                                              <Check className="w-4 h-4" />
+                                              <span>{lang === 'zh' ? '检查完成' : 'Inspection completed'}</span>
+                                          </div>
+                                          {reportGenerationTimer !== null && (
+                                              <div className="flex items-center gap-2 text-sm text-purple-300">
+                                                  <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+                                                  <span>
+                                                      {lang === 'zh' 
+                                                          ? `生成报告中，预计时间是30s (${reportGenerationTimer}s)` 
+                                                          : `Generating report, estimated time: 30s (${reportGenerationTimer}s)`}
+                                                  </span>
+                                              </div>
+                                          )}
                                       </div>
                                   )}
                               </div>
@@ -1065,8 +1405,9 @@ export default function App() {
                                                           }
                                                           return count + idx;
                                                       })();
+                                                      const itemName = lang === 'zh' ? item.nameZh : item.name;
                                                       const isCurrent = inspectionProgress.completed === globalIndex + 1 && 
-                                                                        inspectionProgress.currentItem === item.name;
+                                                                        inspectionProgress.currentItem === itemName;
                                                       const isCompleted = inspectionProgress.completed > globalIndex + 1;
                                                       return (
                                                           <div 
@@ -1084,7 +1425,7 @@ export default function App() {
                                                               ) : (
                                                                   <div className="w-3 h-3 rounded-full border border-slate-600" />
                                                               )}
-                                                              <span>{item.name}</span>
+                                                              <span>{itemName}</span>
                                                           </div>
                                                       );
                                                   })}
@@ -1114,7 +1455,106 @@ export default function App() {
                           </>
                       ) : (
                           <>
-                            {inspectionReport && renderInspectionReport()}
+                            {inspectionReport && (
+                              <div className="relative">
+                                {renderInspectionReport()}
+                                
+                                {/* Chat Dialog - Bottom Right of Report */}
+                                {isReportChatOpen && (
+                                  <div className="fixed bottom-4 right-4 z-50 w-96 h-[500px] flex flex-col bg-slate-900/95 backdrop-blur-md shadow-2xl rounded-lg border border-slate-600">
+                                    <div className="flex items-center justify-between p-3 border-b border-slate-700 shrink-0 bg-slate-800/50 rounded-t-lg">
+                                      <div className="flex items-center gap-2">
+                                        <MessageCircle className="w-4 h-4 text-blue-400" />
+                                        <h3 className="text-sm font-bold text-white">{t.chatTitle}</h3>
+                                      </div>
+                                      <button
+                                        onClick={() => {
+                                          setIsReportChatOpen(false);
+                                          setReportChatMessages([]);
+                                          setReportChatInput('');
+                                        }}
+                                        className="text-slate-400 hover:text-white"
+                                      >
+                                        <X className="w-4 h-4" />
+                                      </button>
+                                    </div>
+
+                                    <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                                      {reportChatMessages.length === 0 ? (
+                                        <div className="text-sm text-slate-400 text-center py-8">
+                                          {lang === 'zh' ? '询问检测报告中的问题...' : 'Ask about issues in the inspection report...'}
+                                        </div>
+                                      ) : (
+                                        reportChatMessages.map((msg, idx) => (
+                                          <div
+                                            key={idx}
+                                            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                                          >
+                                            <div
+                                              className={`max-w-[80%] rounded-lg p-3 ${
+                                                msg.role === 'user'
+                                                  ? 'bg-blue-600 text-white'
+                                                  : 'bg-slate-800 text-slate-200'
+                                              }`}
+                                            >
+                                              <div className="text-xs whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                                            </div>
+                                          </div>
+                                        ))
+                                      )}
+                                      {isChatGenerating && (
+                                        <div className="flex justify-start">
+                                          <div className="bg-slate-800 rounded-lg p-3">
+                                            <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    <div className="p-3 border-t border-slate-700 shrink-0">
+                                      <div className="flex gap-2">
+                                        <input
+                                          type="text"
+                                          value={reportChatInput}
+                                          onChange={(e) => setReportChatInput(e.target.value)}
+                                          onKeyPress={(e) => {
+                                            if (e.key === 'Enter' && !e.shiftKey) {
+                                              e.preventDefault();
+                                              handleReportChatSend();
+                                            }
+                                          }}
+                                          placeholder={t.chatPlaceholder}
+                                          className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-200 text-sm focus:border-blue-500 focus:outline-none"
+                                          disabled={isChatGenerating}
+                                        />
+                                        <button
+                                          onClick={handleReportChatSend}
+                                          disabled={isChatGenerating || !reportChatInput.trim()}
+                                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded transition-colors flex items-center gap-2"
+                                        >
+                                          {isChatGenerating ? (
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                          ) : (
+                                            <Send className="w-4 h-4" />
+                                          )}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Chat Button - Bottom Right of Report */}
+                                {!isReportChatOpen && (
+                                  <button
+                                    onClick={() => setIsReportChatOpen(true)}
+                                    className="fixed bottom-4 right-4 z-40 w-14 h-14 bg-blue-600 hover:bg-blue-500 text-white rounded-full shadow-lg flex items-center justify-center transition-colors"
+                                    title={t.chatWithAI}
+                                  >
+                                    <MessageCircle className="w-6 h-6" />
+                                  </button>
+                                )}
+                              </div>
+                            )}
                             
                             {aiResponse && (
                                 <div className="space-y-4">
@@ -1152,7 +1592,7 @@ export default function App() {
                   {(aiResponse || inspectionReport) ? (
                       <>
                           <button 
-                            onClick={() => { setAiResponse(null); setInspectionReport(null); setAiPrompt(''); }}
+                            onClick={() => { setAiResponse(null); setInspectionReport(null); setAiPrompt(''); setInspectionProgress(null); setReportGenerationTimer(null); }}
                             className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
                           >
                             {t.back}
@@ -1170,7 +1610,7 @@ export default function App() {
                   ) : (
                       <>
                         <button 
-                            onClick={() => setIsAIModalOpen(false)}
+                            onClick={() => { setIsAIModalOpen(false); setInspectionProgress(null); setReportGenerationTimer(null); }}
                             className="px-3 py-1.5 text-xs text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
                         >
                             {t.cancel}
@@ -1197,6 +1637,7 @@ export default function App() {
               </div>
           </div>
       )}
+
     </div>
   );
 }
