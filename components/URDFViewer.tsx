@@ -19,8 +19,10 @@ interface URDFViewerProps {
     onJointChange?: (jointName: string, angle: number) => void;
     lang: Language;
     mode?: 'detail' | 'hardware';
-    onSelect?: (type: 'link' | 'joint', id: string) => void;
+    onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
     theme: Theme;
+    selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
+    hoveredSelection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
 }
 
 // Clean file path (remove '..' and '.', normalize slashes)
@@ -247,15 +249,23 @@ const enhanceSingleMaterial = (material: THREE.Material): THREE.Material => {
         const mat = material as THREE.MeshPhongMaterial;
         
         // Increase shininess for better highlights
-        if (mat.shininess === undefined || mat.shininess < 50) {
-            mat.shininess = 50;
+        if (mat.shininess !== undefined) {
+            mat.shininess = 100; // Even higher shininess
         }
         
         // Enhance specular reflection
         if (!mat.specular) {
-            mat.specular = new THREE.Color(0.3, 0.3, 0.3);
-        } else if (mat.specular.isColor && mat.specular.r < 0.2) {
-            mat.specular.setRGB(0.3, 0.3, 0.3);
+            mat.specular = new THREE.Color(0.8, 0.8, 0.8); // Brighter specular
+        } else if (mat.specular.isColor) {
+            mat.specular.setRGB(0.8, 0.8, 0.8);
+        }
+        
+        // If standard material (PBR), make it more metallic/glossy
+        if ((mat as any).isMeshStandardMaterial) {
+            const stdMat = mat as unknown as THREE.MeshStandardMaterial;
+            stdMat.roughness = 0.2; // Smoother
+            stdMat.metalness = 0.1; // Slight metalness for plastic-like gloss
+            stdMat.envMapIntensity = 1.0;
         }
         
         mat.needsUpdate = true;
@@ -293,6 +303,9 @@ interface RobotModelProps {
     justSelectedRef?: React.MutableRefObject<boolean>;
     t: typeof translations['en'];
     mode?: 'detail' | 'hardware';
+    highlightMode?: 'link' | 'collision';
+    showInertia?: boolean;
+    showCenterOfMass?: boolean;
 }
 
 // Empty raycast function to disable raycast on collision meshes
@@ -306,9 +319,28 @@ const highlightMaterial = new THREE.MeshPhongMaterial({
     emissiveIntensity: 0.25,
 });
 
-function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false, showVisual = true, onSelect, onJointChange, jointAngles, setIsDragging, setActiveJoint, justSelectedRef, t, mode }: RobotModelProps) {
+const collisionHighlightMaterial = new THREE.MeshPhongMaterial({
+    shininess: 10,
+    color: 0xfacc15, // Yellow-400 for high visibility
+    emissive: 0xfacc15,
+    emissiveIntensity: 0.5,
+    side: THREE.DoubleSide,
+});
+
+const collisionBaseMaterial = new THREE.MeshBasicMaterial({
+    color: '#a855f7', // Purple-500
+    wireframe: false,
+    transparent: true,
+    opacity: 0.4,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    depthTest: false
+});
+
+function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false, showVisual = true, onSelect, onJointChange, jointAngles, setIsDragging, setActiveJoint, justSelectedRef, t, mode, selection, hoveredSelection, highlightMode = 'link', showInertia = false, showCenterOfMass = false }: RobotModelProps & { selection?: URDFViewerProps['selection'], hoveredSelection?: URDFViewerProps['selection'] }) {
     const [robot, setRobot] = useState<THREE.Object3D | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [robotVersion, setRobotVersion] = useState(0); // Track async loading updates
     const { scene, camera, gl, invalidate } = useThree();
     const mouseRef = useRef(new THREE.Vector2(-1000, -1000));
     const raycasterRef = useRef(new THREE.Raycaster());
@@ -318,12 +350,122 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
     const invalidateRef = useRef(invalidate);
     const setActiveJointRef = useRef(setActiveJoint);
     
+    // Internal refs to track current highlighted link/subtype to avoid redundant updates
+    const currentSelectionRef = useRef<{ id: string | null, subType: string | null }>({ id: null, subType: null });
+    const currentHoverRef = useRef<{ id: string | null, subType: string | null }>({ id: null, subType: null });
+    
     // Drag state refs (like robot_viewer's JointDragControls)
     const isDraggingJoint = useRef(false);
     const dragJoint = useRef<any>(null);
     const dragHitDistance = useRef(0);
     const lastRayRef = useRef(new THREE.Ray()); // Store last ray for delta calculation
     
+    // Refs for visibility to use inside loadRobot (avoiding stale closures without triggering re-loads)
+    const showVisualRef = useRef(showVisual);
+    const showCollisionRef = useRef(showCollision);
+    useEffect(() => { showVisualRef.current = showVisual; }, [showVisual]);
+    useEffect(() => { showCollisionRef.current = showCollision; }, [showCollision]);
+    
+    // Helper function to highlight/unhighlight link geometry (like robot_viewer)
+    const highlightGeometry = useCallback((linkName: string | null, revert: boolean, subType: 'visual' | 'collision' | undefined = undefined, meshToHighlight?: THREE.Object3D | null) => {
+        if (!robot) return;
+        
+        try {
+            // Use provided subType or fall back to current highlight mode
+            const targetSubType = subType || (highlightMode === 'collision' ? 'collision' : 'visual');
+            
+            // If reverting, we need to restore all meshes that have __origMaterial
+            if (revert) {
+                robot.traverse((c: any) => {
+                    if (c.isMesh && c.__origMaterial !== undefined) {
+                        c.material = c.__origMaterial;
+                        delete c.__origMaterial;
+                        
+                        // Restore visibility state
+                        const isCollider = c.isURDFCollider || c.userData.isCollisionMesh;
+                        if (isCollider) {
+                            c.visible = showCollision;
+                            // Ensure parent group is visible if needed (collision groups are isURDFCollider)
+                            if (c.parent && c.parent.isURDFCollider) c.parent.visible = showCollision;
+                            
+                            // Handle both single material and array of materials
+                            const materials = Array.isArray(c.material) ? c.material : [c.material];
+                            materials.forEach((m: any) => {
+                                if (m) {
+                                    m.transparent = true;
+                                    m.opacity = 0.4;
+                                }
+                            });
+                            c.renderOrder = 999;
+                        } else {
+                            // Restore visual mesh visibility
+                            c.visible = showVisual;
+                            // Restore parent visual group visibility
+                            if (c.parent && c.parent.parent && c.parent.parent.isURDFLink && !c.parent.isURDFCollider) {
+                                c.parent.visible = showVisual;
+                            }
+                        }
+                    }
+                });
+                return;
+            }
+
+            const linkObj = linkName ? (robot as any).links?.[linkName] : null;
+            if (!linkObj && !meshToHighlight) return;
+            
+            // Traverse the link and its children, applying highlight
+            // Stop when encountering another joint (like robot_viewer)
+            const traverse = (c: any, isRoot: boolean) => {
+                // Stop if we hit another joint (not the root)
+                if (!isRoot && c.isURDFJoint) return;
+                
+                if (c.isMesh) {
+                    const isCollider = c.isURDFCollider || c.userData.isCollisionMesh;
+                    // If meshToHighlight is provided, only highlight that specific mesh.
+                    // Otherwise highlight all meshes of the correct subType in the link.
+                    const shouldHighlight = meshToHighlight 
+                        ? c === meshToHighlight 
+                        : ((targetSubType === 'collision' && isCollider) || (targetSubType === 'visual' && !isCollider));
+
+                    if (shouldHighlight) {
+                        // Store original material and apply highlight
+                        if (c.__origMaterial === undefined) {
+                            c.__origMaterial = c.material;
+                        }
+                        c.material = targetSubType === 'collision' ? collisionHighlightMaterial : highlightMaterial;
+                        
+                        // Force visibility when highlighted
+                        c.visible = true;
+                        
+                        // Force parent visibility (important if visual group was hidden)
+                        if (c.parent) c.parent.visible = true;
+
+                        // If highlighting collision, make it opaque
+                        if (isCollider && c.material) {
+                            // highlight material is single MeshPhongMaterial
+                            (c.material as any).transparent = false;
+                            (c.material as any).opacity = 1.0;
+                            c.renderOrder = 1000;
+                        }
+                    }
+                }
+                
+                // Traverse children
+                c.children.forEach((child: any) => {
+                    traverse(child, false);
+                });
+            };
+            
+            if (meshToHighlight) {
+                traverse(meshToHighlight, true);
+            } else if (linkObj) {
+                traverse(linkObj, true);
+            }
+        } catch (err) {
+            console.warn("Error in highlightGeometry:", err);
+        }
+    }, [robot, showCollision, showVisual, highlightMode]);
+
     // Keep refs up to date
     useEffect(() => {
         invalidateRef.current = invalidate;
@@ -466,10 +608,22 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
             );
             
             raycasterRef.current.setFromCamera(mouse, camera);
+
+            // Handle raycast for specific modes
+            const isCollisionMode = highlightMode === 'collision';
+            
+            // Raycast is already enabled/disabled by useEffect based on mode
+
             const intersections = raycasterRef.current.intersectObject(robot, true);
             
-            if (intersections.length > 0) {
-                const hit = intersections[0];
+            // Filter intersections based on current mode
+            const validHits = intersections.filter(hit => {
+                const isCollider = (hit.object as any).isURDFCollider || hit.object.userData.isCollisionMesh;
+                return isCollisionMode ? isCollider : !isCollider;
+            });
+            
+            if (validHits.length > 0) {
+                const hit = validHits[0];
                 
                 // Mark that we just selected something - prevent onPointerMissed from deselecting
                 if (justSelectedRef) {
@@ -482,8 +636,10 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
                 
                 // Handle link selection
                 if (linkObj && onSelect) {
+                    const subType = isCollisionMode ? 'collision' : 'visual';
+
                     if (mode === 'detail') {
-                        onSelect('link', linkObj.name);
+                        onSelect('link', linkObj.name, subType);
                     } else {
                         // Try to find parent joint
                         const parent = linkObj.parent;
@@ -491,13 +647,13 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
                             onSelect('joint', parent.name);
                             // Highlight handled by useEffect
                         } else {
-                            onSelect('link', linkObj.name);
+                            onSelect('link', linkObj.name, subType);
                         }
                     }
                     
                     // Highlight logic
                     if (mode === 'detail' || !((linkObj.parent as any)?.isURDFJoint)) {
-                        highlightLinkGeometry(linkObj.name, false);
+                        highlightGeometry(linkObj.name, false, subType);
                     }
                 }
                 
@@ -547,49 +703,7 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
             gl.domElement.removeEventListener('mouseup', handleMouseUp);
             gl.domElement.removeEventListener('mouseleave', handleMouseLeave);
         };
-    }, [gl, camera, robot, onSelect]);
-    
-    // Helper function to highlight/unhighlight link geometry (like robot_viewer)
-    const highlightLinkGeometry = useCallback((linkName: string | null, revert: boolean) => {
-        if (!robot) return;
-        
-        const linkObj = linkName ? (robot as any).links?.[linkName] : null;
-        if (!linkObj && !revert) return;
-        
-        // If reverting, we need to restore all meshes that have __origMaterial
-        if (revert) {
-            robot.traverse((c: any) => {
-                if (c.isMesh && c.__origMaterial) {
-                    c.material = c.__origMaterial;
-                    delete c.__origMaterial;
-                }
-            });
-            return;
-        }
-        
-        // Traverse the link and its children, applying highlight
-        // Stop when encountering another joint (like robot_viewer)
-        const traverse = (c: any, isRoot: boolean) => {
-            // Skip collision meshes
-            if (c.isURDFCollider) return;
-            
-            // Stop if we hit another joint (not the root)
-            if (!isRoot && c.isURDFJoint) return;
-            
-            if (c.isMesh) {
-                // Store original material and apply highlight
-                c.__origMaterial = c.material;
-                c.material = highlightMaterial;
-            }
-            
-            // Traverse children
-            c.children.forEach((child: any) => {
-                traverse(child, false);
-            });
-        };
-        
-        traverse(linkObj, true);
-    }, [robot]);
+    }, [gl, camera, robot, onSelect, highlightGeometry, highlightMode]);
     
     // Continuous hover detection like robot_viewer's URDFDragControls.update()
     useFrame(() => {
@@ -599,38 +713,54 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
         if (isDraggingJoint.current) return;
 
         raycasterRef.current.setFromCamera(mouseRef.current, camera);
+        
+        // When checking for intersections, we need to be careful with collision meshes
+        // Raycast is already enabled/disabled by useEffect based on mode
+        const isCollisionMode = highlightMode === 'collision';
+
         const intersections = raycasterRef.current.intersectObject(robot, true);
         
         let newHoveredLink: string | null = null;
+        let newHoveredMesh: THREE.Object3D | null = null;
         
         if (intersections.length > 0) {
-            const hit = intersections[0];
-            let current = hit.object as THREE.Object3D | null;
-            
-            // Traverse up to find the owning link
-            while (current) {
-                if ((robot as any).links && (robot as any).links[current.name]) {
-                    newHoveredLink = current.name;
-                    break;
+            // Filter intersections based on current mode (visual vs collision)
+            const validHits = intersections.filter(hit => {
+                const isCollider = (hit.object as any).isURDFCollider || hit.object.userData.isCollisionMesh;
+                return isCollisionMode ? isCollider : !isCollider;
+            });
+
+            if (validHits.length > 0) {
+                const hit = validHits[0];
+                newHoveredMesh = hit.object;
+                let current = hit.object as THREE.Object3D | null;
+                
+                // Traverse up to find the owning link
+                while (current) {
+                    if ((robot as any).links && (robot as any).links[current.name]) {
+                        newHoveredLink = current.name;
+                        break;
+                    }
+                    if (current === robot) break;
+                    current = current.parent;
                 }
-                if (current === robot) break;
-                current = current.parent;
             }
         }
         
-        // Only update if hovered link changed
-        if (newHoveredLink !== hoveredLinkRef.current) {
-            // Unhighlight previous link
-            if (hoveredLinkRef.current) {
-                highlightLinkGeometry(hoveredLinkRef.current, true);
+        // Only update if hovered link or mesh changed
+        if (newHoveredLink !== hoveredLinkRef.current || newHoveredMesh !== (hoveredLinkRef as any).currentMesh) {
+            // Unhighlight previous link/mesh (if it's not the current selection)
+            if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
+                highlightGeometry(hoveredLinkRef.current, true, isCollisionMode ? 'collision' : 'visual', (hoveredLinkRef as any).currentMesh);
             }
             
-            // Highlight new link on hover
-            if (newHoveredLink) {
-                highlightLinkGeometry(newHoveredLink, false);
+            // Highlight new link/mesh on hover
+            if (newHoveredLink && newHoveredLink !== selection?.id) {
+                highlightGeometry(newHoveredLink, false, isCollisionMode ? 'collision' : 'visual', newHoveredMesh);
             }
             
             hoveredLinkRef.current = newHoveredLink;
+            (hoveredLinkRef as any).currentMesh = newHoveredMesh;
         }
     });
     
@@ -642,46 +772,214 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
             // urdf-loader marks collision meshes with isURDFCollider
             if (child.isURDFCollider) {
                 child.visible = showCollision;
-                // Always disable raycast on collision meshes (like robot_viewer)
+                // Enable/Disable raycast based on mode
                 child.traverse((inner: any) => {
                     if (inner.isMesh) {
-                        inner.raycast = emptyRaycast;
+                        // CRITICAL: Ensure async loaded meshes are marked as collision meshes
+                        inner.userData.isCollisionMesh = true;
+                        
+                        inner.raycast = highlightMode === 'collision' 
+                            ? THREE.Mesh.prototype.raycast 
+                            : emptyRaycast;
                     }
                 });
+                
                 if (showCollision) {
                     // Apply purple material to all meshes inside the collider group
                     child.traverse((innerChild: any) => {
                         if (innerChild.isMesh) {
-                            innerChild.material = new THREE.MeshBasicMaterial({
-                                color: '#a855f7', // Purple-500
-                                wireframe: false,
-                                transparent: true,
-                                opacity: 0.4,
-                                side: THREE.FrontSide,
-                                depthWrite: false,
-                                depthTest: false
-                            });
+                            // Ensure tag is present
+                            innerChild.userData.isCollisionMesh = true;
+                            
+                            // Check if this mesh is currently highlighted (has __origMaterial)
+                            // If highlighted, update the backup material instead of current material
+                            // to prevent flashing (overwriting highlight with base material)
+                            if (innerChild.__origMaterial) {
+                                innerChild.__origMaterial = collisionBaseMaterial;
+                            } else {
+                                innerChild.material = collisionBaseMaterial;
+                            }
+                            
                             // Ensure collision meshes render after visual meshes
                             innerChild.renderOrder = 999;
-                            // Disable raycast on collision meshes (like robot_viewer)
-                            innerChild.raycast = emptyRaycast;
                         }
                     });
                 }
             }
         });
-    }, [robot, showCollision]);
+    }, [robot, showCollision, robotVersion, highlightMode]);
 
     // Update visual visibility when showVisual changes
     useEffect(() => {
         if (!robot) return;
         
         robot.traverse((child: any) => {
-            if (child.isMesh && !child.isURDFCollider && !child.userData.isCollisionMesh) {
+            // Check for Visual Groups (children of Link that are not Joint/Collider)
+            // This covers the container of visual meshes.
+            if (child.parent && child.parent.isURDFLink && !child.isURDFJoint && !child.isURDFCollider) {
                 child.visible = showVisual;
             }
+            // Also keep the mesh check as a fallback if structure is flat (though URDFLoader usually groups)
+            // But if we hide the group, mesh visibility doesn't matter much.
+            // Let's keep mesh check for robustness but prioritize group.
+            if (child.isMesh && !child.isURDFCollider && !child.userData.isCollisionMesh) {
+                 // Only set if parent isn't the controlled group (to avoid double setting or conflicts)
+                 // Actually setting mesh visibility is fine too.
+                 child.visible = showVisual;
+            }
         });
-    }, [robot, showVisual]);
+    }, [robot, showVisual, robotVersion]);
+
+    // Effect to handle inertia and CoM visualization
+    useEffect(() => {
+        if (!robot) return;
+
+        let foundInertia = false;
+
+        robot.traverse((child: any) => {
+            if (child.isURDFLink && child.inertial) {
+                foundInertia = true;
+                // Check if visualization group already exists
+                let vizGroup = child.children.find((c: any) => c.name === '__inertia_visual__');
+                
+                if (!vizGroup) {
+                    vizGroup = new THREE.Group();
+                    vizGroup.name = '__inertia_visual__';
+                    child.add(vizGroup);
+                }
+
+                // --- 1. CoM Frame (Axes) ---
+                let axesHelper = vizGroup.children.find((c: any) => c.name === '__com_axis__');
+                if (!axesHelper) {
+                    axesHelper = new THREE.AxesHelper(0.15); // 15cm axes
+                    axesHelper.name = '__com_axis__';
+                    // Make axes visible through objects
+                    (axesHelper.material as THREE.Material).depthTest = false;
+                    (axesHelper.material as THREE.Material).transparent = true;
+                    axesHelper.renderOrder = 999;
+                    vizGroup.add(axesHelper);
+                }
+                axesHelper.visible = showCenterOfMass;
+
+                // --- 2. Inertia Box ---
+                let inertiaBox = vizGroup.children.find((c: any) => c.name === '__inertia_box__');
+                
+                // Only try to create/update box if we don't have one
+                if (!inertiaBox) {
+                    const mass = child.inertial.mass || 0;
+                    const inertia = child.inertial.inertia || {};
+                    
+                    if (mass > 0 && inertia.ixx !== undefined) {
+                        const { ixx, iyy, izz } = inertia;
+                        // Calculate box dimensions for solid box
+                        const calcDim = (a: number, b: number, c: number) => {
+                            const val = 6 * (a + b - c) / mass;
+                            return val > 0 ? Math.sqrt(val) : 0.01;
+                        };
+                        
+                        const dimX = calcDim(iyy, izz, ixx);
+                        const dimY = calcDim(ixx, izz, iyy);
+                        const dimZ = calcDim(ixx, iyy, izz);
+                        
+                        const geom = new THREE.BoxGeometry(dimX, dimY, dimZ);
+                        
+                        // Create a group for the box + edges
+                        inertiaBox = new THREE.Group();
+                        inertiaBox.name = '__inertia_box__';
+
+                        // Solid transparent mesh
+                        const mat = new THREE.MeshBasicMaterial({ 
+                            color: 0xffffff, 
+                            transparent: true,
+                            opacity: 0.3,
+                            depthWrite: false
+                        });
+                        const mesh = new THREE.Mesh(geom, mat);
+                        inertiaBox.add(mesh);
+
+                        // Edges
+                        const edges = new THREE.EdgesGeometry(geom);
+                        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.5 }));
+                        inertiaBox.add(line);
+
+                        vizGroup.add(inertiaBox);
+                    }
+                }
+                
+                if (inertiaBox) {
+                    inertiaBox.visible = showInertia;
+                }
+
+                // Apply Inertial Origin transform to the whole visual group
+                if (child.inertial.origin) {
+                    const origin = child.inertial.origin;
+                    if (origin.position && origin.quaternion) {
+                        // If already parsed as THREE objects
+                        vizGroup.position.copy(origin.position);
+                        vizGroup.quaternion.copy(origin.quaternion);
+                    } else {
+                        // Manual fallback
+                        const xyz = origin.xyz || { x: 0, y: 0, z: 0 };
+                        const rpy = origin.rpy || { x: 0, y: 0, z: 0 };
+                        vizGroup.position.set(xyz.x, xyz.y, xyz.z);
+                        vizGroup.rotation.set(rpy.x, rpy.y, rpy.z);
+                    }
+                }
+                
+                // Show group if either is enabled
+                vizGroup.visible = showInertia || showCenterOfMass;
+            }
+        });
+        
+        // if (!foundInertia) {
+        //    console.warn("No links with inertial data found.");
+        // }
+
+        // Request re-render
+        invalidate();
+
+    }, [robot, showInertia, showCenterOfMass, robotVersion, invalidate]);
+
+    // Effect to handle external selection highlighting (Moved here to run AFTER visibility effects)
+    useEffect(() => {
+        if (!robot) return;
+        
+        // Clear previous selection highlight
+        if (currentSelectionRef.current.id) {
+            highlightGeometry(currentSelectionRef.current.id, true, currentSelectionRef.current.subType as any);
+        }
+        
+        // Apply new selection highlight
+        if (selection?.type === 'link' && selection.id) {
+            // Pass selection.subType (can be undefined), allow highlightGeometry to fallback to highlightMode
+            highlightGeometry(selection.id, false, selection.subType);
+            currentSelectionRef.current = { id: selection.id, subType: selection.subType || null };
+        } else {
+            currentSelectionRef.current = { id: null, subType: null };
+        }
+    }, [robot, selection?.id, selection?.subType, highlightGeometry, robotVersion, highlightMode, showCollision]);
+
+    // Effect to handle external hover highlighting (Moved here to run AFTER visibility effects)
+    useEffect(() => {
+        if (!robot) return;
+        
+        // Clear previous hover highlight
+        if (currentHoverRef.current.id) {
+            // Only clear if it's NOT the current selection (selection has priority)
+            if (currentHoverRef.current.id !== selection?.id || currentHoverRef.current.subType !== selection?.subType) {
+                highlightGeometry(currentHoverRef.current.id, true, currentHoverRef.current.subType as any);
+            }
+        }
+        
+        // Apply new hover highlight
+        if (hoveredSelection?.type === 'link' && hoveredSelection.id) {
+            // Pass hoveredSelection.subType (can be undefined), allow highlightGeometry to fallback to highlightMode
+            highlightGeometry(hoveredSelection.id, false, hoveredSelection.subType);
+            currentHoverRef.current = { id: hoveredSelection.id, subType: hoveredSelection.subType || null };
+        } else {
+            currentHoverRef.current = { id: null, subType: null };
+        }
+    }, [robot, hoveredSelection?.id, hoveredSelection?.subType, selection?.id, selection?.subType, highlightGeometry, robotVersion]);
 
     useEffect(() => {
         if (!urdfContent) return;
@@ -692,6 +990,12 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
                 const urdfDir = '';
                 
                 const manager = createLoadingManager(assets, urdfDir);
+                // Trigger updates when assets finish loading
+                manager.onLoad = () => {
+                    setRobotVersion(v => v + 1);
+                    invalidate();
+                };
+
                 const loader = new URDFLoader(manager);
                 
                 // Enable collision parsing
@@ -715,15 +1019,27 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
                     
                     // No rotation needed - camera already uses Z-up coordinate system
                     
-                    // Hide collision meshes by default and mark them
+                    // Mark collisions and set initial visibility for Groups to prevent flashing
+                    // We must traverse and set visibility synchronously before React renders.
                     robotModel.traverse((child: any) => {
+                        // Mark collision meshes (inner meshes of collider groups)
                         if (child.isURDFCollider) {
-                            child.visible = false;
                             child.traverse((inner: any) => {
                                 if (inner.isMesh) {
                                     inner.userData.isCollisionMesh = true;
                                 }
                             });
+                        }
+                    });
+
+                    // Set initial visibility based on refs
+                    robotModel.traverse((child: any) => {
+                        if (child.isURDFCollider) {
+                            // Collision Group
+                            child.visible = showCollisionRef.current;
+                        } else if (child.parent && child.parent.isURDFLink && !child.isURDFJoint && !child.isURDFCollider) {
+                            // This is likely a Visual Group (direct child of Link, not Joint/Collider)
+                            child.visible = showVisualRef.current;
                         }
                     });
                     
@@ -930,88 +1246,6 @@ const JointInteraction = ({ joint, value, onChange }: { joint: any, value: numbe
         </>
     );
 };
-
-// Center of Mass visualization component
-function CenterOfMassIndicator({ robot }: { robot: any }) {
-    const [com, setCom] = useState<THREE.Vector3 | null>(null);
-    
-    useEffect(() => {
-        if (!robot) return;
-        
-        // Calculate center of mass from all links with inertial data
-        let totalMass = 0;
-        const weightedPosition = new THREE.Vector3();
-        
-        robot.traverse((child: any) => {
-            // Check if this is a link with inertial data
-            if (child.isURDFLink && child.inertial) {
-                const mass = child.inertial.mass || 0;
-                if (mass > 0) {
-                    // Get the link's world position
-                    const linkPos = new THREE.Vector3();
-                    child.getWorldPosition(linkPos);
-                    
-                    // If inertial has origin, add it
-                    if (child.inertial.origin) {
-                        const originOffset = new THREE.Vector3(
-                            child.inertial.origin.xyz?.x || 0,
-                            child.inertial.origin.xyz?.y || 0,
-                            child.inertial.origin.xyz?.z || 0
-                        );
-                        // Transform to world space
-                        originOffset.applyMatrix4(child.matrixWorld);
-                        linkPos.copy(originOffset);
-                    }
-                    
-                    totalMass += mass;
-                    weightedPosition.addScaledVector(linkPos, mass);
-                }
-            }
-        });
-        
-        if (totalMass > 0) {
-            weightedPosition.divideScalar(totalMass);
-            setCom(weightedPosition);
-        } else {
-            // Fallback: use bounding box center
-            const box = new THREE.Box3().setFromObject(robot);
-            const center = new THREE.Vector3();
-            box.getCenter(center);
-            setCom(center);
-        }
-    }, [robot]);
-    
-    if (!com) return null;
-    
-    return (
-        <group position={com}>
-            {/* Main sphere */}
-            <mesh>
-                <sphereGeometry args={[0.02, 16, 16]} />
-                <meshBasicMaterial color="#ef4444" />
-            </mesh>
-            {/* Cross marker */}
-            <mesh rotation={[0, 0, 0]}>
-                <cylinderGeometry args={[0.003, 0.003, 0.08, 8]} />
-                <meshBasicMaterial color="#ef4444" />
-            </mesh>
-            <mesh rotation={[0, 0, Math.PI / 2]}>
-                <cylinderGeometry args={[0.003, 0.003, 0.08, 8]} />
-                <meshBasicMaterial color="#ef4444" />
-            </mesh>
-            <mesh rotation={[Math.PI / 2, 0, 0]}>
-                <cylinderGeometry args={[0.003, 0.003, 0.08, 8]} />
-                <meshBasicMaterial color="#ef4444" />
-            </mesh>
-            {/* Label */}
-            <Html position={[0.05, 0.05, 0]} style={{ pointerEvents: 'none' }}>
-                <div className="text-[10px] text-red-400 bg-google-dark-surface/80 px-1 rounded whitespace-nowrap">
-                    CoM
-                </div>
-            </Html>
-        </group>
-    );
-}
 
 // Scene lighting setup - inspired by robot_viewer EnvironmentManager
 function SceneLighting() {
@@ -1255,7 +1489,7 @@ const JointControlItem = ({
 
     };
 
-export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'detail', onSelect, theme }: URDFViewerProps) {
+export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'detail', onSelect, theme, selection, hoveredSelection }: URDFViewerProps) {
     const t = translations[lang];
     const [robot, setRobot] = useState<any>(null);
     const [selectedJoint, setSelectedJoint] = useState<string | null>(null);
@@ -1265,7 +1499,28 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
     const [showVisual, setShowVisual] = useState(true);
     const [showJointControls, setShowJointControls] = useState(true);
     const [showCenterOfMass, setShowCenterOfMass] = useState(false);
+    const [showInertia, setShowInertia] = useState(false);
     
+    // Highlight mode: 'link' (default) or 'collision'
+    const [highlightMode, setHighlightMode] = useState<'link' | 'collision'>('link');
+    
+    // Automatically show collisions when collision highlight mode is selected
+    useEffect(() => {
+        if (highlightMode === 'collision') {
+            setShowCollision(true);
+        }
+    }, [highlightMode]);
+    
+    // Automatically show collisions when collision tab is selected (legacy support for PropertyEditor)
+    useEffect(() => {
+        if (selection?.subType === 'collision') {
+            setShowCollision(true);
+            setHighlightMode('collision');
+        } else if (selection?.subType === 'visual') {
+            setHighlightMode('link');
+        }
+    }, [selection?.subType]);
+
     // Draggable panel positions - use refs to track panel elements
     const containerRef = useRef<HTMLDivElement>(null);
     const optionsPanelRef = useRef<HTMLDivElement>(null);
@@ -1314,8 +1569,8 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
         }
     }, [robot, onJointChange]);
 
-    const handleSelectWrapper = useCallback((type: 'link' | 'joint', id: string) => {
-        if (onSelect) onSelect(type, id);
+    const handleSelectWrapper = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
+        if (onSelect) onSelect(type, id, subType || selection?.subType);
         
         if (type === 'link' && robot) {
             // Find the joint that drives this link
@@ -1333,7 +1588,7 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
         } else {
             setActiveJoint(null);
         }
-    }, [onSelect, robot]);
+    }, [onSelect, robot, selection?.subType]);
     
     // Drag handlers for panels - fixed offset calculation
     const handleMouseDown = useCallback((panel: 'options' | 'joints', e: React.MouseEvent) => {
@@ -1440,6 +1695,24 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                     
                     {!isOptionsCollapsed && (
                     <div className="px-2 pb-2 pt-1 flex flex-col gap-2">
+                        <div className="border-b border-slate-200 dark:border-slate-700 pb-2 mb-1">
+                            <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1.5 px-1">{t.highlightMode || "Selection Mode"}</div>
+                            <div className="flex bg-slate-100 dark:bg-google-dark-bg rounded p-0.5">
+                                <button
+                                    onClick={() => setHighlightMode('link')}
+                                    className={`flex-1 py-1 text-[10px] font-medium rounded transition-all ${highlightMode === 'link' ? 'bg-white dark:bg-google-dark-surface text-google-blue shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                                >
+                                    {t.linkMode || "Link"}
+                                </button>
+                                <button
+                                    onClick={() => setHighlightMode('collision')}
+                                    className={`flex-1 py-1 text-[10px] font-medium rounded transition-all ${highlightMode === 'collision' ? 'bg-white dark:bg-google-dark-surface text-google-blue shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                                >
+                                    {t.collisionMode || "Collision"}
+                                </button>
+                            </div>
+                        </div>
+
                         <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1">
                             <input 
                                 type="checkbox" 
@@ -1478,6 +1751,16 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                                 className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
                             />
                             {t.showCenterOfMass}
+                        </label>
+
+                        <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1">
+                            <input 
+                                type="checkbox" 
+                                checked={showInertia} 
+                                onChange={(e) => setShowInertia(e.target.checked)}
+                                className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
+                            />
+                            {t.showInertia || "Show Inertia"}
                         </label>
                     </div>
                     )}
@@ -1585,6 +1868,11 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                         justSelectedRef={justSelectedRef}
                         t={t}
                         mode={mode}
+                        selection={selection}
+                        hoveredSelection={hoveredSelection}
+                        highlightMode={highlightMode}
+                        showInertia={showInertia}
+                        showCenterOfMass={showCenterOfMass}
                     />
                 </Suspense>
                 
@@ -1594,10 +1882,6 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                         value={jointAngles[activeJoint] || 0}
                         onChange={(val) => handleJointAngleChange(activeJoint, val)}
                     />
-                )}
-                
-                {showCenterOfMass && robot && (
-                    <CenterOfMassIndicator robot={robot} />
                 )}
                 
                 <Grid 

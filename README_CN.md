@@ -37,13 +37,17 @@
 
 ### 🎨 沉浸式 3D 工作区
 
-- **高保真渲染**: 基于 **Three.js** 与 **React Three Fiber** 构建，提供响应迅速、逼真的设计体验。
+- **高保真渲染**: 基于 **Three.js** 与 **React Three Fiber** 构建，采用增强的 PBR 材质与光泽度渲染，提供逼真的视觉体验。
 - **直观操控**: 采用工业标准的变换控件 (Gizmos)，实现对机器人部件的精确空间操控。
-- **可视化分析**: 实时显示关节轴向、参考坐标系及碰撞边界，确保设计的物理合理性。
+- **可视化分析**: 
+  - 实时显示关节轴向与参考坐标系。
+  - 支持逐连杆的 **质心 (CoM)** 与 **惯量张量 (Inertia Tensor)** 可视化（半透明实体盒指示）。
+  - **高亮模式切换**: 支持在“连杆”与“碰撞体”高亮模式间切换，便于精确检查与编辑。
+  - **碰撞体预览**: 优化的碰撞体渲染（支持双面显示），提升选中灵敏度与可视化效果。
 
 ### 🤖 AI 增强工程
 
-集成 **Google Gemini AI**，UrdfArchitect 引入了自然语言交互接口，重塑机器人设计体验：
+集成 **OpenAI 兼容的 AI 模型** (如 DeepSeek)，UrdfArchitect 引入了自然语言交互接口，重塑机器人设计体验：
 - *"生成一个四足移动平台"*
 - *"在 base_link 上集成一套激光雷达阵列"*
 - *"根据力矩需求为髋关节推荐最优执行器"*
@@ -87,8 +91,15 @@
 3. **配置 API Key（可选）**
    如需使用 AI 功能，请在根目录创建 `.env.local` 文件并添加：
    ```env
-   API_KEY=your_google_gemini_api_key
+   OPENAI_API_KEY=your_openai_api_key
+   OPENAI_BASE_URL=https://your-proxy-url/v1
+   OPENAI_MODEL=bce/deepseek-v3.2
    ```
+   
+   **配置说明:**
+   - `OPENAI_API_KEY`: 你的 OpenAI API Key 或代理 Key
+   - `OPENAI_BASE_URL`: (可选) 自定义 API 端点。如果不设置，默认为 `https://api.openai.com/v1`
+   - `OPENAI_MODEL`: (可选) 指定使用的模型名称。如果不设置，默认为 `bce/deepseek-v3.2`
 
 4. **启动开发服务器**
    ```bash

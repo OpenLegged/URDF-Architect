@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { RobotState, JointType, GeometryType, AppMode, UrdfLink, MotorSpec, Theme } from '../types';
-import { Upload, File, Wand, ExternalLink, ChevronRight, PanelRightOpen } from 'lucide-react';
+import { Upload, File, Wand, ExternalLink, ChevronRight, PanelRightOpen, Eye, Box } from 'lucide-react';
 import * as THREE from 'three';
 import { translations, Language } from '../services/i18n';
 
 interface PropertyEditorProps {
   robot: RobotState;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
+  onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+  onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
   mode: AppMode;
   assets: Record<string, string>;
   onUploadAsset: (file: File) => void;
@@ -98,7 +100,8 @@ const GeometryEditor = ({
   onUpdate,
   assets,
   onUploadAsset,
-  t
+  t,
+  isTabbed = false
 }: { 
   data: any, 
   robot: RobotState,
@@ -106,7 +109,8 @@ const GeometryEditor = ({
   onUpdate: (d: any) => void,
   assets: Record<string, string>,
   onUploadAsset: (file: File) => void,
-  t: any
+  t: any,
+  isTabbed?: boolean
 }) => {
     const geomData = data[category] || {};
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -172,9 +176,10 @@ const GeometryEditor = ({
     };
 
     return (
-        <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
-            <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 capitalize">{category === 'visual' ? t.visualGeometry : t.collisionGeometry}</h3>
+        <div className={isTabbed ? "pt-2" : "border-t border-slate-200 dark:border-slate-700 pt-4"}>
+            <div className={`flex items-center justify-between ${isTabbed ? 'mb-2' : 'mb-3'}`}>
+                {!isTabbed && <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 capitalize">{category === 'visual' ? t.visualGeometry : t.collisionGeometry}</h3>}
+                {isTabbed && <div />} {/* Spacer */}
                 {geomData.type === GeometryType.CYLINDER && (
                     <button 
                         onClick={handleAutoAlign}
@@ -264,10 +269,10 @@ const GeometryEditor = ({
                     }}
                     className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
                 >
-                    <option value={GeometryType.BOX}>Box</option>
-                    <option value={GeometryType.CYLINDER}>Cylinder</option>
-                    <option value={GeometryType.SPHERE}>Sphere</option>
-                    <option value={GeometryType.MESH}>Mesh (File)</option>
+                    <option value={GeometryType.BOX}>{t.box}</option>
+                    <option value={GeometryType.CYLINDER}>{t.cylinder}</option>
+                    <option value={GeometryType.SPHERE}>{t.sphere}</option>
+                    <option value={GeometryType.MESH}>{t.mesh}</option>
                     <option value={GeometryType.NONE}>{t.none}</option>
                 </select>
             </InputGroup>
@@ -381,6 +386,8 @@ const GeometryEditor = ({
 export const PropertyEditor: React.FC<PropertyEditorProps> = ({ 
   robot, 
   onUpdate, 
+  onSelect,
+  onHover,
   mode, 
   assets, 
   onUploadAsset, 
@@ -394,6 +401,23 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   const isLink = selection.type === 'link';
   const data = selection.id ? (isLink ? robot.links[selection.id] : robot.joints[selection.id]) : null;
   const t = translations[lang];
+
+  // Tab state for Link properties (Visual vs Collision)
+  const [linkTab, setLinkTab] = useState<'visual' | 'collision'>('visual');
+
+  // Sync internal tab state with global selection subType
+  useEffect(() => {
+      if (selection.subType) {
+          setLinkTab(selection.subType);
+      }
+  }, [selection.subType]);
+
+  const handleTabChange = (tab: 'visual' | 'collision') => {
+      setLinkTab(tab);
+      if (selection.id && onSelect) {
+          onSelect('link', selection.id, tab);
+      }
+  };
 
   // Width state for resizable sidebar
   const [width, setWidth] = useState(320);
@@ -593,37 +617,107 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
         {/* --- LINK PROPERTIES --- */}
         {isLink ? (
             <>
-                {/* Link Name is always visible */}
-                <InputGroup label={t.name}>
-                    <input
-                        type="text"
-                        value={data.name}
-                        onChange={(e) => onUpdate('link', selection.id!, { ...data, name: e.target.value })}
-                        className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full focus:border-google-blue focus:outline-none"
-                    />
-                </InputGroup>
+                {/* Global Name (Skeleton & Hardware Mode) */}
+                {mode !== 'detail' && (
+                    <InputGroup label={t.name}>
+                        <input
+                            type="text"
+                            value={data.name}
+                            onChange={(e) => onUpdate('link', selection.id!, { ...data, name: e.target.value })}
+                            className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full focus:border-google-blue focus:outline-none"
+                        />
+                    </InputGroup>
+                )}
 
-                {/* Detail Mode: Visual & Collision */}
+                {/* Detail Mode: Visual & Collision Tabs */}
                 {mode === 'detail' && (
                   <>
-                      <GeometryEditor 
-                        data={data}
-                        robot={robot} 
-                        category="visual" 
-                        onUpdate={(d) => onUpdate('link', selection.id!, d)}
-                        assets={assets}
-                        onUploadAsset={onUploadAsset}
-                        t={t}
-                      />
-                      <GeometryEditor 
-                        data={data}
-                        robot={robot} 
-                        category="collision" 
-                        onUpdate={(d) => onUpdate('link', selection.id!, d)}
-                        assets={assets}
-                        onUploadAsset={onUploadAsset} 
-                        t={t}
-                      />
+                      {/* Tab Navigation - High Contrast & Icons */}
+                      <div className="flex p-1 bg-slate-200 dark:bg-slate-800 rounded-lg mb-5 select-none gap-1">
+                          {/* Only show Visual tab if NOT in collision mode */}
+                          {selection.subType !== 'collision' && (
+                              <button
+                                  onClick={() => handleTabChange('visual')}
+                                  onMouseEnter={() => onHover?.('link', selection.id, 'visual')}
+                                  onMouseLeave={() => onHover?.(null, null)}
+                                  className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-md transition-all duration-200 relative ${
+                                      linkTab === 'visual'
+                                          ? 'bg-google-blue text-white shadow-md'
+                                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-300/50 dark:hover:bg-slate-700/50'
+                                  }`}
+                              >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  {t.visualGeometry}
+                                  {/* Dot indicator if Visual exists */}
+                                  {(data as UrdfLink).visual?.type && (data as UrdfLink).visual.type !== GeometryType.NONE && (
+                                    <span className={`absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full ${linkTab === 'visual' ? 'bg-blue-200' : 'bg-google-blue'}`} />
+                                  )}
+                              </button>
+                          )}
+                          
+                          {/* Only show Collision tab if we are in collision mode, OR if we are in visual mode we can still switch to it? 
+                              User said "When selection mode is collision... click collision... show its detailed config".
+                              And "In collision mode... visual no need to display".
+                              So if subType is collision, HIDE visual tab. 
+                              If subType is visual, we probably should keep Collision tab visible so user can switch? 
+                              Or should we hide Collision tab in Visual mode too? 
+                              Let's stick to: If Collision Mode -> Only Collision Tab.
+                          */}
+                          <button
+                              onClick={() => handleTabChange('collision')}
+                              onMouseEnter={() => onHover?.('link', selection.id, 'collision')}
+                              onMouseLeave={() => onHover?.(null, null)}
+                              className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-md transition-all duration-200 relative ${
+                                  (linkTab === 'collision' || selection.subType === 'collision')
+                                      ? 'bg-google-blue text-white shadow-md'
+                                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-300/50 dark:hover:bg-slate-700/50'
+                              }`}
+                          >
+                              <Box className="w-3.5 h-3.5" />
+                              {t.collisionGeometry}
+                              {/* Dot indicator if Collision exists */}
+                              {(data as UrdfLink).collision?.type && (data as UrdfLink).collision.type !== GeometryType.NONE && (
+                                <span className={`absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full ${(linkTab === 'collision' || selection.subType === 'collision') ? 'bg-blue-200' : 'bg-google-blue'}`} />
+                              )}
+                          </button>
+                      </div>
+
+                      {/* Visual Tab Content - Only if Visual Tab is active/visible */}
+                      <div className={linkTab === 'visual' && selection.subType !== 'collision' ? 'block animate-in fade-in slide-in-from-bottom-1 duration-200' : 'hidden'}>
+                          <InputGroup label={t.name}>
+                              <input
+                                  type="text"
+                                  value={data.name}
+                                  onChange={(e) => onUpdate('link', selection.id!, { ...data, name: e.target.value })}
+                                  className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full focus:border-google-blue focus:outline-none"
+                              />
+                          </InputGroup>
+                          
+                          <GeometryEditor 
+                            data={data}
+                            robot={robot} 
+                            category="visual" 
+                            onUpdate={(d) => onUpdate('link', selection.id!, d)}
+                            assets={assets}
+                            onUploadAsset={onUploadAsset}
+                            t={t}
+                            isTabbed={true}
+                          />
+                      </div>
+
+                      {/* Collision Tab Content */}
+                      <div className={(linkTab === 'collision' || selection.subType === 'collision') ? 'block animate-in fade-in slide-in-from-bottom-1 duration-200' : 'hidden'}>
+                          <GeometryEditor 
+                            data={data}
+                            robot={robot} 
+                            category="collision" 
+                            onUpdate={(d) => onUpdate('link', selection.id!, d)}
+                            assets={assets}
+                            onUploadAsset={onUploadAsset} 
+                            t={t}
+                            isTabbed={true}
+                          />
+                      </div>
                   </>
                 )}
                 
@@ -645,7 +739,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                       <InputGroup label={t.centerOfMass || "Center of Mass"}>
                           <div className="space-y-2">
                               <div>
-                                  <span className="text-[10px] text-slate-500 mb-0.5 block">Position (xyz)</span>
+                                  <span className="text-[10px] text-slate-500 mb-0.5 block">{t.position}</span>
                                   <Vec3Input
                                       value={(data as UrdfLink).inertial.origin?.xyz || { x: 0, y: 0, z: 0 }}
                                       onChange={(xyz: any) => onUpdate('link', selection.id!, {
@@ -662,7 +756,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                                   />
                               </div>
                               <div>
-                                  <span className="text-[10px] text-slate-500 mb-0.5 block">Orientation (rpy)</span>
+                                  <span className="text-[10px] text-slate-500 mb-0.5 block">{t.rotation}</span>
                                   <Vec3Input
                                       value={(data as UrdfLink).inertial.origin?.rpy || { r: 0, p: 0, y: 0 }}
                                       onChange={(rpy: any) => onUpdate('link', selection.id!, {
@@ -675,7 +769,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                                               }
                                           }
                                       })}
-                                      labels={['R', 'P', 'Y']}
+                                      labels={[t.roll, t.pitch, t.yaw]}
                                       keys={['r', 'p', 'y']}
                                   />
                               </div>

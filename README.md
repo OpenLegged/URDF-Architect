@@ -36,9 +36,13 @@ This platform orchestrates the entire robotic modeling lifecycle—from kinemati
 
 ### 🎨 Immersive 3D Workspace
 
-- **High-Fidelity Rendering**: Powered by **Three.js** and **React Three Fiber** for a responsive, photorealistic design experience.
+- **High-Fidelity Rendering**: Powered by **Three.js** and **React Three Fiber** with enhanced PBR materials and glossiness for a photorealistic experience.
 - **Intuitive Manipulation**: Industry-standard gizmos for precise spatial transformation of robot segments.
-- **Visual Analytics**: Real-time visualization of joint axes, reference frames, and collision boundaries to ensure design integrity.
+- **Visual Analytics**: 
+  - Real-time visualization of joint axes and reference frames.
+  - Per-link **Center of Mass (CoM)** and **Inertia Tensor** visualization with transparent box indicators.
+  - **Highlight Mode**: Toggle between Link and Collision highlighting for precise inspection and editing.
+  - **Collision Preview**: High-visibility collision mesh rendering with "DoubleSide" support for easier selection.
 
 ### 🤖 AI-Augmented Engineering
 
