@@ -86,8 +86,8 @@ Includes a built-in library of popular robot actuators:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/OpenLegged/URDF-Architect.git
-   cd URDF-Architect
+   git clone https://github.com/OpenLegged/URDF-Studio.git
+   cd URDF-Studio
    ```
 
 2. **Install dependencies**

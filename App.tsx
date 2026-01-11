@@ -1303,7 +1303,7 @@ export default function App() {
             </button>
 
             <a 
-                href="https://github.com/OpenLegged/URDF-Architect"
+                href="https://github.com/OpenLegged/URDF-Studio"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center justify-center p-2 border rounded transition-colors bg-slate-100 dark:bg-google-dark-bg hover:bg-slate-200 dark:hover:bg-google-dark-border text-slate-600 dark:text-slate-300 border-slate-300 dark:border-google-dark-border"
