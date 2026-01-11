@@ -10,6 +10,7 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 // @ts-ignore
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { translations, Language } from '../services/i18n';
+import { MathUtils as DataUtils } from '../services/mathUtils';
 
 // Fix for missing JSX types in strict environments or when global types are not picked up
 // Augmenting both global and React module JSX namespaces to ensure compatibility
@@ -53,10 +54,12 @@ declare module 'react' {
 
 interface CommonVisualizerProps {
   robot: RobotState;
-  onSelect: (type: 'link' | 'joint', id: string) => void;
+  onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
   mode: 'skeleton' | 'detail' | 'hardware';
-  showGeometry: boolean;
+  showGeometry: boolean; // For Skeleton mode
+  showVisual: boolean;   // For Detail mode
+  selectionTarget?: 'visual' | 'collision'; // For Detail mode selection override
   showLabels: boolean;
   showJointAxes: boolean;
   showDetailOrigin: boolean;
@@ -64,6 +67,8 @@ interface CommonVisualizerProps {
   showCollision: boolean;
   showHardwareOrigin: boolean;
   showHardwareLabels: boolean;
+  showInertia: boolean;
+  showCenterOfMass: boolean;
   transformMode: 'translate' | 'rotate';
   assets: Record<string, string>;
   lang: Language;
@@ -219,6 +224,106 @@ const JointAxesVisual = ({ joint }: { joint: UrdfJoint }) => {
   );
 };
 
+// Inertia Box Visualization Component
+// Displays the inertia tensor as a transparent box
+const InertiaBox = ({ link }: { link: any }) => {
+  const inertial = link.inertial;
+  if (!inertial) return null;
+
+  // Compute box dimensions using MathUtils
+  const boxData = DataUtils.computeInertiaBox(inertial);
+  if (!boxData) return null;
+
+  const { width, height, depth, rotation } = boxData;
+  
+  // Get inertial origin position
+  const origin = inertial.origin || { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } };
+  const pos = origin.xyz || { x: 0, y: 0, z: 0 };
+  
+  // Combine rotations: origin rotation (RPY) * inertia tensor rotation
+  const originRot = new THREE.Euler(
+    origin.rpy?.r || 0,
+    origin.rpy?.p || 0,
+    origin.rpy?.y || 0,
+    'XYZ'
+  );
+  const originQuat = new THREE.Quaternion().setFromEuler(originRot);
+  const finalQuat = originQuat.multiply(rotation);
+  const finalEuler = new THREE.Euler().setFromQuaternion(finalQuat);
+
+  return (
+    <group position={[pos.x, pos.y, pos.z]} rotation={finalEuler}>
+      <mesh>
+        <boxGeometry args={[width, height, depth]} />
+        <meshPhongMaterial 
+          color={0x4a9eff} 
+          transparent 
+          opacity={0.35}
+          depthWrite={false}
+          shininess={50}
+        />
+      </mesh>
+    </group>
+  );
+};
+
+// Center of Mass Indicator for individual links
+const LinkCenterOfMass = ({ link }: { link: any }) => {
+  const inertial = link.inertial;
+  if (!inertial || inertial.mass <= 0) return null;
+  
+  const origin = inertial.origin || { xyz: { x: 0, y: 0, z: 0 } };
+  const pos = origin.xyz || { x: 0, y: 0, z: 0 };
+  const radius = 0.015;
+
+  return (
+    <group position={[pos.x, pos.y, pos.z]}>
+      {/* 8 octants forming a sphere */}
+      {/* Top (+Y) */}
+      <mesh rotation={[0, 0, 0]}>
+         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
+         <meshBasicMaterial color="#000000" />
+      </mesh>
+      <mesh rotation={[0, Math.PI/2, 0]}>
+         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
+         <meshBasicMaterial color="#ffffff" />
+      </mesh>
+      <mesh rotation={[0, Math.PI, 0]}>
+         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
+         <meshBasicMaterial color="#000000" />
+      </mesh>
+      <mesh rotation={[0, -Math.PI/2, 0]}>
+         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
+         <meshBasicMaterial color="#ffffff" />
+      </mesh>
+
+      {/* Bottom (-Y) - rotate by X PI */}
+      <mesh rotation={[Math.PI, 0, 0]}>
+         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
+         <meshBasicMaterial color="#000000" />
+      </mesh>
+      <mesh rotation={[Math.PI, Math.PI/2, 0]}>
+         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
+         <meshBasicMaterial color="#ffffff" />
+      </mesh>
+      <mesh rotation={[Math.PI, Math.PI, 0]}>
+         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
+         <meshBasicMaterial color="#000000" />
+      </mesh>
+       <mesh rotation={[Math.PI, -Math.PI/2, 0]}>
+         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
+         <meshBasicMaterial color="#ffffff" />
+      </mesh>
+      {/* Label */}
+      <Html position={[0.03, 0.03, 0]} style={{ pointerEvents: 'none' }}>
+        <div className="text-[8px] text-red-400 bg-black/60 px-1 rounded whitespace-nowrap">
+          CoM
+        </div>
+      </Html>
+    </group>
+  );
+};
+
 function JointNode({
   joint,
   robot,
@@ -226,6 +331,8 @@ function JointNode({
   onUpdate,
   mode,
   showGeometry,
+  showVisual,
+  selectionTarget,
   showLabels,
   showJointAxes,
   showDetailOrigin,
@@ -233,6 +340,8 @@ function JointNode({
   showCollision,
   showHardwareOrigin,
   showHardwareLabels,
+  showInertia,
+  showCenterOfMass,
   transformMode,
   depth,
   assets,
@@ -334,6 +443,8 @@ function JointNode({
                     onUpdate={onUpdate}
                     mode={mode}
                     showGeometry={showGeometry}
+                    showVisual={showVisual}
+                    selectionTarget={selectionTarget}
                     showLabels={showLabels}
                     showJointAxes={showJointAxes}
                     showDetailOrigin={showDetailOrigin}
@@ -341,6 +452,8 @@ function JointNode({
                     showCollision={showCollision}
                     showHardwareOrigin={showHardwareOrigin}
                     showHardwareLabels={showHardwareLabels}
+                    showInertia={showInertia}
+                    showCenterOfMass={showCenterOfMass}
                     transformMode={transformMode}
                     depth={depth + 1}
                     assets={assets}
@@ -360,6 +473,8 @@ function RobotNode({
   onUpdate,
   mode,
   showGeometry,
+  showVisual,
+  selectionTarget,
   showLabels,
   showJointAxes,
   showDetailOrigin,
@@ -367,6 +482,8 @@ function RobotNode({
   showCollision,
   showHardwareOrigin,
   showHardwareLabels,
+  showInertia,
+  showCenterOfMass,
   transformMode,
   depth,
   assets,
@@ -379,21 +496,27 @@ function RobotNode({
   const link = robot.links[linkId];
   if (!link) return null;
 
-  const handleLinkClick = (e: any) => {
+  const handleLinkClick = (e: any, subType?: 'visual' | 'collision') => {
       e.stopPropagation();
-      // Select the link directly. JointNode will detect this via childLinkId and show controls.
-      if (robot.selection.type !== 'link' || robot.selection.id !== linkId) {
-          onSelect('link', linkId);
-      }
+      
+      // Override subType if selectionTarget is set (global override)
+      // Otherwise use the clicked subType (granular selection)
+      const targetSubType = selectionTarget || subType;
+      
+      onSelect('link', linkId, targetSubType);
   };
 
   const childJoints = Object.values(robot.joints).filter(j => j.parentLinkId === linkId);
   const isSelected = robot.selection.type === 'link' && robot.selection.id === linkId;
+  const selectionSubType = robot.selection.subType;
   const isRoot = linkId === robot.rootLinkId;
   
   // Refs for dragging geometry in Detail mode
   const [visualRef, setVisualRef] = useState<THREE.Group | null>(null);
   const [collisionRef, setCollisionRef] = useState<THREE.Group | null>(null);
+  
+  // Hover State for highlighting before selection
+  const [hoveredType, setHoveredType] = useState<'visual' | 'collision' | null>(null);
 
   // Render Visual or Collision Geometry
   const renderGeometry = (isCollision: boolean) => {
@@ -402,8 +525,14 @@ function RobotNode({
     if (isCollision && !data) return null;
 
     if (mode === 'skeleton' && !showGeometry && !isCollision) return null;
-    if (isCollision && !showCollision) return null;
-    if (isCollision && mode !== 'detail') return null;
+    
+    if (mode === 'detail') {
+        if (isCollision && !showCollision) return null;
+        if (!isCollision && !showVisual) return null;
+    } else {
+        if (isCollision && !showCollision) return null;
+        if (isCollision && mode !== 'detail') return null;
+    }
 
     const { type, dimensions, color, origin, meshPath } = data;
     
@@ -415,18 +544,57 @@ function RobotNode({
 
     const isSkeleton = mode === 'skeleton';
     
-    // Collision styling - Purple wireframe
+    // Interaction States
+    const isHovered = hoveredType === (isCollision ? 'collision' : 'visual');
+    const isVisualHighlight = !isCollision && isSelected && (selectionSubType === 'visual' || !selectionSubType);
+    const isCollisionHighlight = isCollision && isSelected && selectionSubType === 'collision';
+    
+    // Collision styling - Purple wireframe default
     const colColor = '#a855f7'; // Purple-500
-    const matOpacity = isCollision ? 0.3 : (isSkeleton ? 0.2 : 1.0);
-    const matWireframe = isCollision ? true : isSkeleton;
-    const finalColor = isCollision ? colColor : (isSelected ? '#60a5fa' : color);
+    
+    // Opacity: Higher if selected or hovered
+    const matOpacity = isCollision ? ((isCollisionHighlight || isHovered) ? 0.6 : 0.3) : (isSkeleton ? 0.2 : 1.0);
+    // Wireframe: Fill if selected or hovered (for collision)
+    const matWireframe = isCollision ? (!isCollisionHighlight && !isHovered) : isSkeleton; 
+    
+    const baseColor = isCollision ? colColor : color;
+    
+    // Colors
+    const selectionColorVisual = '#60a5fa'; // Blue-400
+    const selectionColorCollision = '#d946ef'; // Fuchsia-500
+    const hoverColorVisual = '#93c5fd'; // Blue-300 (Lighter)
+    const hoverColorCollision = '#e879f9'; // Fuchsia-400 (Lighter)
 
-    const material = new THREE.MeshStandardMaterial({
+    let finalColor = baseColor;
+    if (isVisualHighlight) finalColor = selectionColorVisual;
+    else if (isCollisionHighlight) finalColor = selectionColorCollision;
+    else if (isHovered) finalColor = isCollision ? hoverColorCollision : hoverColorVisual; // Hover color
+
+    // Emissive Logic
+    let emissiveColor = '#000000';
+    let emissiveIntensity = 0;
+
+    if (isVisualHighlight) {
+        emissiveColor = '#1e40af';
+        emissiveIntensity = 0.5;
+    } else if (isCollisionHighlight) {
+        emissiveColor = '#86198f';
+        emissiveIntensity = 0.5;
+    } else if (isHovered) {
+        emissiveColor = isCollision ? '#d946ef' : '#3b82f6';
+        emissiveIntensity = 0.3; // Mild glow on hover
+    }
+
+    // Use MeshPhysicalMaterial for improved glossy rendering (inspired by robot_viewer)
+    const material = new THREE.MeshPhysicalMaterial({
         color: finalColor,
-        roughness: 0.3,
-        metalness: 0.2,
-        emissive: isSelected && !isCollision ? '#1e40af' : '#000000',
-        emissiveIntensity: 0.5,
+        roughness: isSkeleton ? 0.6 : 0.15,  // Lower roughness for glossier appearance
+        metalness: isSkeleton ? 0.1 : 0.3,   // Slight metallic sheen
+        clearcoat: isSkeleton ? 0 : 0.3,     // Clear coat for extra glossiness
+        clearcoatRoughness: 0.1,
+        reflectivity: 0.8,
+        emissive: emissiveColor,
+        emissiveIntensity: emissiveIntensity,
         transparent: isSkeleton || isCollision,
         opacity: matOpacity,
         wireframe: matWireframe,
@@ -437,7 +605,15 @@ function RobotNode({
     });
 
     const wrapperProps = {
-        onClick: (e: any) => { handleLinkClick(e); },
+        onClick: (e: any) => { handleLinkClick(e, isCollision ? 'collision' : 'visual'); },
+        onPointerOver: (e: any) => {
+            e.stopPropagation();
+            setHoveredType(isCollision ? 'collision' : 'visual');
+        },
+        onPointerOut: (e: any) => {
+             e.stopPropagation();
+             setHoveredType(null);
+        },
         position: origin ? new THREE.Vector3(origin.xyz.x, origin.xyz.y, origin.xyz.z) : undefined,
         // URDF uses rpy (roll-pitch-yaw) which is rotation around X, Y, Z in that order
         rotation: origin ? new THREE.Euler(origin.rpy.r, origin.rpy.p, origin.rpy.y, 'XYZ') : undefined,
@@ -584,6 +760,12 @@ function RobotNode({
         {renderGeometry(true)}
       </React.Fragment>
 
+      {/* Inertia Visualization */}
+      {showInertia && <InertiaBox link={link} />}
+      
+      {/* Center of Mass Indicator */}
+      {showCenterOfMass && <LinkCenterOfMass link={link} />}
+
       {/* Transform Controls for Link Geometry in Detail Mode - Disabled to prioritize Joint Controls
       {isSelected && mode === 'detail' && activeGeometryRef && (
           <TransformControls
@@ -624,6 +806,8 @@ function RobotNode({
             onUpdate={onUpdate}
             mode={mode}
             showGeometry={showGeometry}
+            showVisual={showVisual}
+            selectionTarget={selectionTarget}
             showLabels={showLabels}
             showJointAxes={showJointAxes}
             showDetailOrigin={showDetailOrigin}
@@ -631,6 +815,8 @@ function RobotNode({
             showCollision={showCollision}
             showHardwareOrigin={showHardwareOrigin}
             showHardwareLabels={showHardwareLabels}
+            showInertia={showInertia}
+            showCenterOfMass={showCenterOfMass}
             transformMode={transformMode}
             depth={depth + 1}
             assets={assets}
@@ -655,10 +841,15 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
   const [showDetailOrigin, setShowDetailOrigin] = useState(false);
   const [showDetailLabels, setShowDetailLabels] = useState(false);
   const [showCollision, setShowCollision] = useState(false);
+  const [showVisual, setShowVisual] = useState(true);
 
   // Hardware Settings
   const [showHardwareOrigin, setShowHardwareOrigin] = useState(false);
   const [showHardwareLabels, setShowHardwareLabels] = useState(false);
+
+  // Inertia and Center of Mass Settings
+  const [showInertia, setShowInertia] = useState(false);
+  const [showCenterOfMass, setShowCenterOfMass] = useState(false);
 
   // Joint pivot refs for TransformControls at root level
   const [jointPivots, setJointPivots] = useState<Record<string, THREE.Group | null>>({});
@@ -861,8 +1052,20 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
                         {t.showLabels}
                      </label>
                      <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
+                        <input type="checkbox" checked={showVisual} onChange={(e) => setShowVisual(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
+                        {t.showVisual}
+                     </label>
+                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
                         <input type="checkbox" checked={showCollision} onChange={(e) => setShowCollision(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
                         {t.showCollision}
+                     </label>
+                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
+                        <input type="checkbox" checked={showInertia} onChange={(e) => setShowInertia(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
+                        {t.showInertia}
+                     </label>
+                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
+                        <input type="checkbox" checked={showCenterOfMass} onChange={(e) => setShowCenterOfMass(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
+                        {t.showCenterOfMass}
                      </label>
                    </div>
                  </div>
@@ -930,6 +1133,7 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
                     onUpdate={onUpdate}
                     mode={mode} 
                     showGeometry={showGeometry}
+                    showVisual={showVisual}
                     showLabels={showLabels}
                     showJointAxes={showJointAxes}
                     showDetailOrigin={showDetailOrigin}
@@ -937,6 +1141,8 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
                     showCollision={showCollision}
                     showHardwareOrigin={showHardwareOrigin}
                     showHardwareLabels={showHardwareLabels}
+                    showInertia={showInertia}
+                    showCenterOfMass={showCenterOfMass}
                     transformMode={transformMode}
                     depth={0}
                     assets={assets}

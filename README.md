@@ -1,6 +1,6 @@
 <div align="center">
 
-# URDF Architect
+# URDF Studio
 [![React](https://img.shields.io/badge/React-19.2-blue?logo=react)](https://reactjs.org/)
 [![Three.js](https://img.shields.io/badge/Three.js-0.181-black?logo=three.js)](https://threejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue?logo=typescript)](https://www.typescriptlang.org/)
@@ -19,9 +19,9 @@
 
 ## 📖 Overview
 
-**UrdfArchitect** is a state-of-the-art, web-based visual environment engineered for the seamless creation, manipulation, and export of Unified Robot Description Format (URDF) models. By abstracting the complexities of raw XML authoring into an intuitive graphical interface, it empowers roboticists to focus on design and innovation.
+**URDF Studio** is a state-of-the-art, web-based visual environment engineered for the seamless creation, manipulation, and export of Unified Robot Description Format (URDF) models. By abstracting the complexities of raw XML authoring into an intuitive graphical interface, it empowers roboticists to focus on design and innovation.
 
-This platform orchestrates the entire robotic modeling lifecycle—from kinematic skeleton definition to high-fidelity geometric detailing and precise hardware specification. Enhanced by **Generative AI**, UrdfArchitect accelerates prototyping and ensures compatibility with industry-standard simulation ecosystems like MuJoCo.
+This platform orchestrates the entire robotic modeling lifecycle—from kinematic skeleton definition to high-fidelity geometric detailing and precise hardware specification. Enhanced by **Generative AI**, URDF Studio accelerates prototyping and ensures compatibility with industry-standard simulation ecosystems like MuJoCo.
 
 
 ## ✨ Core Capabilities
@@ -36,16 +36,46 @@ This platform orchestrates the entire robotic modeling lifecycle—from kinemati
 
 ### 🎨 Immersive 3D Workspace
 
-- **High-Fidelity Rendering**: Powered by **Three.js** and **React Three Fiber** for a responsive, photorealistic design experience.
+- **High-Fidelity Rendering**: Powered by **Three.js** and **React Three Fiber** with enhanced PBR materials and glossiness for a photorealistic experience.
 - **Intuitive Manipulation**: Industry-standard gizmos for precise spatial transformation of robot segments.
-- **Visual Analytics**: Real-time visualization of joint axes, reference frames, and collision boundaries to ensure design integrity.
+- **Visual Analytics**: 
+  - Real-time visualization of joint axes and reference frames.
+  - Per-link **Center of Mass (CoM)** and **Inertia Tensor** visualization with transparent box indicators.
+  - **Highlight Mode**: Toggle between Link and Collision highlighting for precise inspection and editing.
+  - **Collision Preview**: High-visibility collision mesh rendering with "DoubleSide" support for easier selection.
 
 ### 🤖 AI-Augmented Engineering
 
-Leveraging **OpenAI-compatible AI models** (including DeepSeek), UrdfArchitect introduces a natural language interface for robotic design:
+Leveraging **OpenAI-compatible AI models** (including DeepSeek), URDF Studio introduces a natural language interface for robotic design:
 - *"Generate a quadrupedal locomotion platform"*
 - *"Integrate a LiDAR sensor array onto the base_link"*
 - *"Recommend optimal actuation for the hip joint based on torque requirements"*
+
+### 🔍 AI Inspector
+
+The **AI Inspector** provides comprehensive automated quality assessment of URDF models using industry-standard evaluation criteria:
+
+- **Multi-Category Inspection**: Evaluates six key dimensions:
+  - **Physical Plausibility**: Mass, inertia validity, symmetry consistency
+  - **Link Frames**: Joint collinearity, axis conventions, waist centering
+  - **Assembly Logic**: Actuator mass attribution, linkage placement
+  - **Kinematics & Simulation**: Topology validation, joint limits, collision optimization
+  - **Hardware Configuration**: Motor specifications, armature configuration
+  - **Naming Conventions**: Uniqueness and semantic naming standards
+
+- **Detailed Scoring System**: Each inspection item is scored on a 0-10 scale, with comprehensive reports showing:
+  - Overall achievement rate
+  - Category-specific scores
+  - Individual issue identification with severity levels (error/warning/suggestion)
+  - Related link/joint references for easy navigation
+
+- **Interactive Features**:
+  - Selective inspection: Choose specific items to check
+  - Single-item retest: Re-evaluate specific issues after fixes
+  - AI-powered chat: Discuss inspection results and get recommendations
+  - PDF export: Download detailed inspection reports
+
+- **Real-time Progress**: Visual progress tracking during inspection with detailed item-by-item status
 
 ### 📥 Seamless Interoperability
 
@@ -82,8 +112,8 @@ Includes a built-in library of popular robot actuators:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/OpenLegged/URDF-Architect.git
-   cd URDF-Architect
+   git clone https://github.com/OpenLegged/URDF-Studio.git
+   cd URDF-Studio
    ```
 
 2. **Install dependencies**
@@ -125,7 +155,8 @@ Includes a built-in library of popular robot actuators:
 2. **Detail Mode**: Select a link to configure its visual and collision geometry. Upload custom meshes if needed.
 3. **Hardware Mode**: Select a joint to assign motors from the library. The system automatically sets limits based on the motor specs.
 4. **AI Assistant**: Click the "AI Assistant" button, type your request, and apply the generated changes.
-5. **Export**: Click "Export" to download the full project ZIP.
+5. **AI Inspector**: Click the "AI审阅" (AI Inspector) button, select inspection items, run comprehensive quality checks, and review detailed reports with scoring.
+6. **Export**: Click "Export" to download the full project ZIP.
 
 ## 📄 License
 

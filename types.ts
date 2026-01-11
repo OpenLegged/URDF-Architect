@@ -76,7 +76,7 @@ export interface RobotState {
   links: Record<string, UrdfLink>;
   joints: Record<string, UrdfJoint>;
   rootLinkId: string;
-  selection: { type: 'link' | 'joint' | null; id: string | null };
+  selection: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
 }
 
 export interface MotorSpec {

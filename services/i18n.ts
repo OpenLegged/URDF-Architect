@@ -68,6 +68,10 @@ export const translations = {
     library: "Library",
     custom: "Custom",
     autoAlign: "Auto Align with Child Joint",
+    box: "Box",
+    cylinder: "Cylinder",
+    sphere: "Sphere",
+    mesh: "Mesh (File)",
 
     // Visualizer
     skeletonOptions: "Skeleton Options",
@@ -108,6 +112,11 @@ export const translations = {
     chatTitle: "Chat with AI",
     chatPlaceholder: "Ask a question...",
     chatWithAI: "Chat with AI",
+    processing: "Processing...",
+    askAboutReport: "Ask about issues in the inspection report...",
+    checking: "Checking",
+    inspectionCompleted: "Inspection completed",
+    generatingReport: "Generating report, estimated time: 30s",
     
     // Additional UI
     collapseSidebar: "Collapse sidebar",
@@ -115,12 +124,16 @@ export const translations = {
     showJointControls: "Show Joint Controls",
     showVisual: "Show Visual",
     showCenterOfMass: "Show Center of Mass",
+    showInertia: "Show Inertia",
     jointControls: "Joint Controls",
     viewOptions: "View Options",
     loadingRobot: "Loading robot...",
     enterRobotName: "Enter robot name...",
     enterMotorType: "Enter motor type...",
-    modeLabel: "Mode"
+    modeLabel: "Mode",
+    highlightMode: "Selection Mode",
+    linkMode: "Link",
+    collisionMode: "Collision"
   },
   zh: {
     // Header
@@ -188,6 +201,10 @@ export const translations = {
     library: "库",
     custom: "自定义",
     autoAlign: "自动与子关节对齐",
+    box: "方块",
+    cylinder: "圆柱体",
+    sphere: "球体",
+    mesh: "网格 (文件)",
 
     // Visualizer
     skeletonOptions: "骨架选项",
@@ -229,17 +246,26 @@ export const translations = {
     chatTitle: "与 AI 对话",
     chatPlaceholder: "输入问题...",
     chatWithAI: "与 AI 对话",
+    processing: "正在处理...",
+    askAboutReport: "询问检测报告中的问题...",
+    checking: "正在检查",
+    inspectionCompleted: "检查完成",
+    generatingReport: "生成报告中，预计时间是30s",
         // Additional UI
     collapseSidebar: "收起侧栏",
     switchUnit: "切换单位",
     showJointControls: "显示关节控制",
     showVisual: "显示可视化",
     showCenterOfMass: "显示质心",
+    showInertia: "显示惯量",
     jointControls: "关节控制",
     viewOptions: "视图选项",
     loadingRobot: "加载机器人中...",
     enterRobotName: "输入机器人名称...",
     enterMotorType: "输入电机型号...",
-    modeLabel: "模式"
+    modeLabel: "模式",
+    highlightMode: "选择模式",
+    linkMode: "连杆",
+    collisionMode: "碰撞体"
   }
 };

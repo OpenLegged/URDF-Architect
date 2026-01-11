@@ -46,8 +46,19 @@ export default function App() {
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 
   // Language State
-  const [lang, setLang] = useState<Language>('en');
+  const [lang, setLang] = useState<Language>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('language');
+      if (saved === 'en' || saved === 'zh') {
+        return saved;
+      }
+    }
+    return 'en';
+  });
   const t = translations[lang];
+
+  // Hover state for synchronized highlighting
+  const [hoveredSelection, setHoveredSelection] = useState<RobotState['selection']>({ type: null, id: null });
 
   // Theme State
   const [theme, setTheme] = useState<Theme>(() => {
@@ -106,10 +117,15 @@ export default function App() {
     }
   }, [theme]);
 
+  // Save language preference
+  useEffect(() => {
+    localStorage.setItem('language', lang);
+  }, [lang]);
+
   // --- Actions ---
 
-  const handleSelect = (type: 'link' | 'joint', id: string) => {
-    setRobot(prev => ({ ...prev, selection: { type, id } }));
+  const handleSelect = (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
+    setRobot(prev => ({ ...prev, selection: { type, id, subType } }));
   };
 
   const handleNameChange = (name: string) => {
@@ -1287,7 +1303,7 @@ export default function App() {
             </button>
 
             <a 
-                href="https://github.com/OpenLegged/URDF-Architect"
+                href="https://github.com/OpenLegged/URDF-Studio"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center justify-center p-2 border rounded transition-colors bg-slate-100 dark:bg-google-dark-bg hover:bg-slate-200 dark:hover:bg-google-dark-border text-slate-600 dark:text-slate-300 border-slate-300 dark:border-google-dark-border"
@@ -1380,7 +1396,10 @@ export default function App() {
                 lang={lang}
                 mode={appMode}
                 onSelect={handleSelect}
+                selection={robot.selection}
+                hoveredSelection={hoveredSelection}
                 theme={theme}
+                robotLinks={robot.links}
             />
         ) : (
             <Visualizer 
@@ -1397,6 +1416,8 @@ export default function App() {
         <PropertyEditor 
             robot={robot} 
             onUpdate={handleUpdate}
+            onSelect={handleSelect}
+            onHover={(type, id, subType) => setHoveredSelection({ type, id, subType })}
             mode={appMode}
             assets={assets}
             onUploadAsset={handleUploadAsset}
@@ -1549,11 +1570,11 @@ export default function App() {
                                           style={{ width: `${(inspectionProgress.completed / inspectionProgress.total) * 100}%` }}
                                       />
                                   </div>
-                                  {inspectionProgress.currentCategory && inspectionProgress.currentItem && (
+                                      {inspectionProgress.currentCategory && inspectionProgress.currentItem && (
                                       <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                                           <Loader2 className="w-4 h-4 animate-spin text-purple-500 dark:text-purple-400" />
                                           <span>
-                                              {lang === 'zh' ? '正在检查' : 'Checking'}: <span className="font-bold text-purple-600 dark:text-purple-300">{inspectionProgress.currentCategory}</span> - <span className="text-slate-500 dark:text-slate-400">{inspectionProgress.currentItem}</span>
+                                              {t.checking}: <span className="font-bold text-purple-600 dark:text-purple-300">{inspectionProgress.currentCategory}</span> - <span className="text-slate-500 dark:text-slate-400">{inspectionProgress.currentItem}</span>
                                           </span>
                                       </div>
                                   )}
@@ -1561,15 +1582,13 @@ export default function App() {
                                       <div className="space-y-2">
                                           <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
                                               <Check className="w-4 h-4" />
-                                              <span>{lang === 'zh' ? '检查完成' : 'Inspection completed'}</span>
+                                              <span>{t.inspectionCompleted}</span>
                                           </div>
                                           {reportGenerationTimer !== null && (
                                               <div className="flex items-center gap-2 text-sm text-slate-800 dark:text-slate-200">
                                                   <Loader2 className="w-4 h-4 animate-spin text-slate-800 dark:text-slate-200" />
                                                   <span>
-                                                      {lang === 'zh' 
-                                                          ? `生成报告中，预计时间是30s (${reportGenerationTimer}s)` 
-                                                          : `Generating report, estimated time: 30s (${reportGenerationTimer}s)`}
+                                                      {t.generatingReport} ({reportGenerationTimer}s)
                                                   </span>
                                               </div>
                                           )}
@@ -1673,7 +1692,7 @@ export default function App() {
                                     <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
                                       {reportChatMessages.length === 0 ? (
                                         <div className="text-sm text-slate-500 dark:text-slate-400 text-center py-8">
-                                          {lang === 'zh' ? '询问检测报告中的问题...' : 'Ask about issues in the inspection report...'}
+                                          {t.askAboutReport}
                                         </div>
                                       ) : (
                                         reportChatMessages.map((msg, idx) => (
@@ -1762,7 +1781,7 @@ export default function App() {
                                             </div>
                                         </div>
                                         <div className="text-sm text-slate-700 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
-                                            {aiResponse.explanation || (lang === 'zh' ? '正在处理...' : 'Processing...')}
+                                            {aiResponse.explanation || t.processing}
                                         </div>
                                     </div>
                                     
