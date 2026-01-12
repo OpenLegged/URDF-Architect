@@ -44,12 +44,6 @@ This platform orchestrates the entire robotic modeling lifecycle—from kinemati
   - **Highlight Mode**: Toggle between Link and Collision highlighting for precise inspection and editing.
   - **Collision Preview**: High-visibility collision mesh rendering with "DoubleSide" support for easier selection.
 
-### 🤖 AI-Augmented Engineering
-
-Leveraging **OpenAI-compatible AI models** (including DeepSeek), URDF Studio introduces a natural language interface for robotic design:
-- *"Generate a quadrupedal locomotion platform"*
-- *"Integrate a LiDAR sensor array onto the base_link"*
-- *"Recommend optimal actuation for the hip joint based on torque requirements"*
 
 ### 🔍 AI Inspector
 
