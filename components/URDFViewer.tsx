@@ -740,10 +740,28 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
                     if (p.userData?.isGizmo) return false;
                     p = p.parent;
                 }
-                // Determine if we should filter based on mode.
-                // WE REMOVED STRICT FILTERING: If it's visible and hit, it's selectable.
-                // This fixes issues where "clicking the front object" fails if the front object
-                // type doesn't match the current mode (e.g. clicking a visible collider in visual mode).
+                // In collision mode, only allow collision meshes to be selected
+                if (isCollisionMode) {
+                    // Check if hit object or any parent is a collision mesh
+                    let obj: THREE.Object3D | null = hit.object;
+                    let isCollision = false;
+                    while (obj) {
+                        if (obj.userData?.isCollisionMesh || (obj as any).isURDFCollider) {
+                            isCollision = true;
+                            break;
+                        }
+                        obj = obj.parent;
+                    }
+                    return isCollision;
+                }
+                // In visual mode, exclude collision meshes
+                let obj: THREE.Object3D | null = hit.object;
+                while (obj) {
+                    if (obj.userData?.isCollisionMesh || (obj as any).isURDFCollider) {
+                        return false;
+                    }
+                    obj = obj.parent;
+                }
                 return true;
             });
             
@@ -791,7 +809,8 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
                 }
                 
                 // Find nearest movable joint for dragging (like urdf-loader's approach)
-                const joint = findNearestJoint(hit.object);
+                // Disable joint dragging in collision mode to focus on collision editing
+                const joint = isCollisionMode ? null : findNearestJoint(hit.object);
                 
                 // Start joint dragging (like urdf-loader's setGrabbed)
                 if (joint) {
@@ -888,7 +907,27 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
                     if (p.userData?.isGizmo) return false;
                     p = p.parent;
                 }
-                // Relaxed filtering for hover as well
+                // In collision mode, only allow collision meshes to be hovered
+                if (isCollisionMode) {
+                    let obj: THREE.Object3D | null = hit.object;
+                    let isCollision = false;
+                    while (obj) {
+                        if (obj.userData?.isCollisionMesh || (obj as any).isURDFCollider) {
+                            isCollision = true;
+                            break;
+                        }
+                        obj = obj.parent;
+                    }
+                    return isCollision;
+                }
+                // In visual mode, exclude collision meshes
+                let obj: THREE.Object3D | null = hit.object;
+                while (obj) {
+                    if (obj.userData?.isCollisionMesh || (obj as any).isURDFCollider) {
+                        return false;
+                    }
+                    obj = obj.parent;
+                }
                 return true;
             });
 

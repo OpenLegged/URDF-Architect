@@ -73,6 +73,10 @@ export const translations = {
     cylinder: "Cylinder",
     sphere: "Sphere",
     mesh: "Mesh (File)",
+    width: "Width (X)",
+    depth: "Depth (Y)",
+    height: "Height (Z)",
+    radius: "Radius",
 
     // Visualizer
     skeletonOptions: "Skeleton Options",
@@ -220,6 +224,10 @@ export const translations = {
     cylinder: "圆柱体",
     sphere: "球体",
     mesh: "网格 (文件)",
+    width: "宽度 (X)",
+    depth: "深度 (Y)",
+    height: "高度 (Z)",
+    radius: "半径",
 
     // Visualizer
     skeletonOptions: "骨架选项",

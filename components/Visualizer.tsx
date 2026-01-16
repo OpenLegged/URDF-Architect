@@ -73,6 +73,7 @@ interface CommonVisualizerProps {
   assets: Record<string, string>;
   lang: Language;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
+  onRegisterCollisionRef?: (linkId: string, ref: THREE.Group | null) => void;
 }
 
 interface JointNodeProps extends CommonVisualizerProps {
@@ -86,6 +87,7 @@ interface RobotNodeProps extends CommonVisualizerProps {
   linkId: string;
   depth: number;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
+  onRegisterCollisionRef?: (linkId: string, ref: THREE.Group | null) => void;
 }
 
 const useLoadingManager = (assets: Record<string, string>) => {
@@ -346,8 +348,9 @@ function JointNode({
   depth,
   assets,
   lang,
-  onRegisterJointPivot
-}: JointNodeProps) {
+  onRegisterJointPivot,
+  onRegisterCollisionRef
+}: JointNodeProps & { onRegisterCollisionRef?: (linkId: string, ref: THREE.Group | null) => void }) {
   
   if (depth > 50) return null;
 
@@ -459,6 +462,7 @@ function JointNode({
                     assets={assets}
                     lang={lang}
                     onRegisterJointPivot={onRegisterJointPivot}
+                    onRegisterCollisionRef={onRegisterCollisionRef}
                 />
             </group>
         </group>
@@ -488,7 +492,8 @@ function RobotNode({
   depth,
   assets,
   lang,
-  onRegisterJointPivot
+  onRegisterJointPivot,
+  onRegisterCollisionRef
 }: RobotNodeProps) {
   
   if (depth > 50) return null;
@@ -514,6 +519,19 @@ function RobotNode({
   // Refs for dragging geometry in Detail mode
   const [visualRef, setVisualRef] = useState<THREE.Group | null>(null);
   const [collisionRef, setCollisionRef] = useState<THREE.Group | null>(null);
+  
+  // Register collision ref with parent when selected
+  const isCollisionSelected = isSelected && selectionSubType === 'collision';
+  useEffect(() => {
+    if (onRegisterCollisionRef && isCollisionSelected) {
+      onRegisterCollisionRef(linkId, collisionRef);
+    }
+    return () => {
+      if (onRegisterCollisionRef && isCollisionSelected) {
+        onRegisterCollisionRef(linkId, null);
+      }
+    };
+  }, [collisionRef, linkId, isCollisionSelected, onRegisterCollisionRef]);
   
   // Hover State for highlighting before selection
   const [hoveredType, setHoveredType] = useState<'visual' | 'collision' | null>(null);
@@ -822,6 +840,7 @@ function RobotNode({
             assets={assets}
             lang={lang}
             onRegisterJointPivot={onRegisterJointPivot}
+            onRegisterCollisionRef={onRegisterCollisionRef}
          />
       ))}
     </group>
@@ -860,6 +879,17 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
   
   const selectedJointPivot = robot.selection.type === 'joint' && robot.selection.id
     ? jointPivots[robot.selection.id] 
+    : null;
+
+  // Collision geometry refs for TransformControls at root level
+  const [collisionRefs, setCollisionRefs] = useState<Record<string, THREE.Group | null>>({});
+  
+  const handleRegisterCollisionRef = (linkId: string, ref: THREE.Group | null) => {
+    setCollisionRefs(prev => ({ ...prev, [linkId]: ref }));
+  };
+  
+  const selectedCollisionRef = robot.selection.type === 'link' && robot.selection.id && robot.selection.subType === 'collision'
+    ? collisionRefs[robot.selection.id] 
     : null;
 
   // Draggable panel state
@@ -1162,6 +1192,7 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
                     assets={assets}
                     lang={lang}
                     onRegisterJointPivot={handleRegisterJointPivot}
+                    onRegisterCollisionRef={handleRegisterCollisionRef}
                  />
             </group>
             
@@ -1196,6 +1227,42 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
                     size={0.7}
                     space="local"
                     onMouseUp={handleTransformEnd}
+                />
+              );
+            })()}
+
+            {/* TransformControls for collision geometry in detail mode */}
+            {mode === 'detail' && selectedCollisionRef && robot.selection.type === 'link' && robot.selection.id && robot.selection.subType === 'collision' && (() => {
+              const linkId = robot.selection.id!;
+              const link = robot.links[linkId];
+              
+              if (!link) return null;
+              
+              const handleCollisionTransformEnd = () => {
+                if (selectedCollisionRef) {
+                  const pos = selectedCollisionRef.position;
+                  const rot = selectedCollisionRef.rotation;
+                  
+                  onUpdate('link', linkId, {
+                    ...link,
+                    collision: {
+                      ...link.collision,
+                      origin: {
+                        xyz: { x: pos.x, y: pos.y, z: pos.z },
+                        rpy: { r: rot.x, p: rot.y, y: rot.z }
+                      }
+                    }
+                  });
+                }
+              };
+              
+              return (
+                <TransformControls 
+                    object={selectedCollisionRef}
+                    mode={transformMode}
+                    size={0.7}
+                    space="local"
+                    onMouseUp={handleCollisionTransformEnd}
                 />
               );
             })()}

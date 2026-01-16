@@ -1,8 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useHistory } from './hooks/useHistory';
 import { TreeEditor } from './components/TreeEditor';
 import { PropertyEditor } from './components/PropertyEditor';
 import { Visualizer } from './components/Visualizer';
 import { URDFViewer } from './components/URDFViewer';
+import { SourceCodeEditor } from './components/SourceCodeEditor';
 import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec, Theme, InspectionReport, InspectionIssue } from './types';
 import { generateURDF } from './services/urdfGenerator';
 import { generateMujocoXML } from './services/mujocoGenerator';
@@ -13,26 +15,31 @@ import { generateRobotFromPrompt, runRobotInspection } from './services/geminiSe
 import { DEFAULT_MOTOR_LIBRARY } from './services/motorLibrary';
 import { translations, Language } from './services/i18n';
 import { INSPECTION_CRITERIA, getInspectionCategory } from './services/inspectionCriteria';
-import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight, FileText, RefreshCw, MessageCircle, Send, FileJson, Folder, Heart, Sun, Moon, Briefcase } from 'lucide-react';
+import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight, FileText, RefreshCw, MessageCircle, Send, FileJson, Folder, Heart, Sun, Moon, Briefcase, Undo, Redo, RotateCcw, RotateCw, History, Code } from 'lucide-react';
 import JSZip from 'jszip';
 import jsPDF from 'jspdf';
 
 const INITIAL_ID = 'base_link';
 
-const INITIAL_STATE: RobotState = {
+type RobotData = Omit<RobotState, 'selection'>;
+
+const INITIAL_ROBOT_DATA: RobotData = {
   name: 'my_robot',
   links: {
     [INITIAL_ID]: { ...DEFAULT_LINK, id: INITIAL_ID, name: 'base_link', visual: { ...DEFAULT_LINK.visual, color: '#64748b' } }
   },
   joints: {},
   rootLinkId: INITIAL_ID,
-  selection: { type: null, id: null },
 };
 
 export type AppMode = 'skeleton' | 'detail' | 'hardware';
 
 export default function App() {
-  const [robot, setRobot] = useState<RobotState>(INITIAL_STATE);
+  const { state: robotData, set: setRobotData, undo, redo, canUndo, canRedo, reset: resetRobotData } = useHistory<RobotData>(INITIAL_ROBOT_DATA);
+  const [selection, setSelection] = useState<RobotState['selection']>({ type: null, id: null });
+
+  const robot: RobotState = useMemo(() => ({ ...robotData, selection }), [robotData, selection]);
+
   const [appMode, setAppMode] = useState<AppMode>('skeleton');
   const [assets, setAssets] = useState<Record<string, string>>({});
   const [motorLibrary, setMotorLibrary] = useState<Record<string, MotorSpec[]>>(DEFAULT_MOTOR_LIBRARY);
@@ -40,6 +47,18 @@ export default function App() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const importFolderInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+
+  // Clean up selection if the selected item no longer exists (e.g. after undo)
+  useEffect(() => {
+    if (selection.id && selection.type) {
+      const exists = selection.type === 'link' 
+        ? robotData.links[selection.id]
+        : robotData.joints[selection.id];
+      if (!exists) {
+        setSelection({ type: null, id: null });
+      }
+    }
+  }, [robotData, selection]);
 
   // Sidebar collapse state
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(() => {
@@ -135,9 +154,11 @@ export default function App() {
 
   // Toast Notification State
   const [toast, setToast] = useState<{ show: boolean; message: string; type: 'info' | 'success' }>({ show: false, message: '', type: 'info' });
-  const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
-  const [isToolboxOpen, setIsToolboxOpen] = useState(false);
+  
+  // Menu State
+  const [activeMenu, setActiveMenu] = useState<'file' | 'toolbox' | null>(null);
   const [isAboutMenuOpen, setIsAboutMenuOpen] = useState(false);
+  const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
 
   const showPrivacyToast = () => {
       setToast({ 
@@ -160,6 +181,29 @@ export default function App() {
     }
   }, [theme]);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Undo: Ctrl+Z
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        if (canUndo) {
+          undo();
+          e.preventDefault();
+        }
+      }
+      // Redo: Ctrl+Y or Ctrl+Shift+Z
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+          if (canRedo) {
+            redo();
+            e.preventDefault();
+          }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo, canUndo, canRedo]);
+
   // Save language preference
   useEffect(() => {
     localStorage.setItem('language', lang);
@@ -180,7 +224,7 @@ export default function App() {
   // --- Actions ---
 
   const handleSelect = (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
-    setRobot(prev => ({ ...prev, selection: { type, id, subType } }));
+    setSelection({ type, id, subType });
   };
 
   const [focusTarget, setFocusTarget] = useState<string | null>(null);
@@ -192,11 +236,11 @@ export default function App() {
   };
 
   const handleNameChange = (name: string) => {
-    setRobot(prev => ({ ...prev, name }));
+    setRobotData(prev => ({ ...prev, name }));
   };
 
   const handleUpdate = (type: 'link' | 'joint', id: string, data: any) => {
-    setRobot(prev => {
+    setRobotData(prev => {
       const newState = {
         ...prev,
         [type === 'link' ? 'links' : 'joints']: {
@@ -207,7 +251,7 @@ export default function App() {
       
       // If we have imported URDF content, regenerate it to reflect changes
       if (originalUrdfContent) {
-        const newUrdf = generateURDF(newState);
+        const newUrdf = generateURDF({ ...newState, selection });
         setTimeout(() => setOriginalUrdfContent(newUrdf), 0);
       }
       
@@ -234,7 +278,7 @@ export default function App() {
     const newJoint: UrdfJoint = {
       ...DEFAULT_JOINT,
       id: newJointId,
-      name: `joint_${Object.keys(robot.joints).length + 1}`,
+      name: `joint_${Object.keys(robotData.joints).length + 1}`,
       parentLinkId: parentId,
       childLinkId: newLinkId,
       origin: { 
@@ -243,12 +287,12 @@ export default function App() {
       },
     };
 
-    setRobot(prev => ({
+    setRobotData(prev => ({
       ...prev,
       links: { ...prev.links, [newLinkId]: newLink },
       joints: { ...prev.joints, [newJointId]: newJoint },
-      selection: { type: 'joint', id: newJointId } // Auto select new JOINT
     }));
+    setSelection({ type: 'joint', id: newJointId });
   };
 
   const handleDelete = (linkId: string) => {
@@ -284,12 +328,12 @@ export default function App() {
       toDeleteLinks.forEach(id => delete newLinks[id]);
       toDeleteJoints.forEach(id => delete newJoints[id]);
 
-      setRobot(prev => ({
+      setRobotData(prev => ({
           ...prev,
           links: newLinks,
           joints: newJoints,
-          selection: { type: null, id: null }
       }));
+      setSelection({ type: null, id: null });
   };
 
   const handleUploadAsset = (file: File) => {
@@ -476,7 +520,11 @@ export default function App() {
             Object.values(assets).forEach(url => URL.revokeObjectURL(url));
             
             setAssets(newAssets);
-            setRobot(newState);
+            
+            const { selection: newSelection, ...newData } = newState;
+            resetRobotData(newData);
+            setSelection(newSelection);
+            
             setAppMode('detail'); // Start with detail mode
         } else {
             const msg = lang === 'zh' 
@@ -900,14 +948,14 @@ export default function App() {
           }
           
           try {
-              setRobot(prev => {
+              const targetRootId = generated.rootLinkId || robotData.rootLinkId;
+              setRobotData(prev => {
                   const newState = {
                     ...prev,
                     name: generated.name || prev.name,
                     links: generated.links as Record<string, UrdfLink>,
                     joints: generated.joints as Record<string, UrdfJoint>,
                     rootLinkId: generated.rootLinkId || prev.rootLinkId,
-                    selection: { type: 'link' as const, id: generated.rootLinkId || prev.rootLinkId }
                   };
                   console.log('[Apply Changes] New robot state:', {
                     name: newState.name,
@@ -917,6 +965,7 @@ export default function App() {
                   });
                   return newState;
               });
+              setSelection({ type: 'link', id: targetRootId });
               setAppMode('skeleton');
               setIsAIModalOpen(false);
               setAiPrompt('');
@@ -930,6 +979,14 @@ export default function App() {
           console.warn('[Apply Changes] No data in aiResponse');
           alert('没有可应用的数据。');
       }
+  };
+
+  const handleCodeChange = (newCode: string) => {
+    const newState = parseURDF(newCode);
+    if (newState) {
+      const { selection: newSelection, ...newData } = newState;
+      setRobotData(newData);
+    }
   };
 
   const handleDragStart = (e: React.MouseEvent) => {
@@ -1359,27 +1416,27 @@ export default function App() {
             <div className="flex items-center">
                 <div className="relative">
                     <button 
-                        onClick={() => setIsFileMenuOpen(!isFileMenuOpen)}
-                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${isFileMenuOpen ? 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
+                        onClick={() => setActiveMenu(activeMenu === 'file' ? null : 'file')}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeMenu === 'file' ? 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
                     >
                         <FileText className="w-3.5 h-3.5" />
                         {t.file}
-                        <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${isFileMenuOpen ? 'rotate-180' : ''}`} />
+                        <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'file' ? 'rotate-180' : ''}`} />
                     </button>
                     
-                    {isFileMenuOpen && (
+                    {activeMenu === 'file' && (
                         <>
-                            <div className="fixed inset-0 z-40" onClick={() => setIsFileMenuOpen(false)} />
+                            <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
                             <div className="absolute top-full left-0 mt-1 w-52 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50 overflow-hidden py-1">
                                 <button
-                                    onClick={() => { setIsFileMenuOpen(false); setTimeout(() => importFolderInputRef.current?.click(), 0); }}
+                                    onClick={() => { setActiveMenu(null); setTimeout(() => importFolderInputRef.current?.click(), 0); }}
                                     className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                                 >
                                     <Folder className="w-4 h-4 text-slate-400" />
                                     {t.importFolder}
                                 </button>
                                 <button
-                                    onClick={() => { setIsFileMenuOpen(false); setTimeout(() => importInputRef.current?.click(), 0); }}
+                                    onClick={() => { setActiveMenu(null); setTimeout(() => importInputRef.current?.click(), 0); }}
                                     className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                                 >
                                     <Download className="w-4 h-4 text-slate-400" />
@@ -1387,7 +1444,7 @@ export default function App() {
                                 </button>
                                 <div className="h-px bg-slate-100 dark:bg-slate-700 my-1" />
                                 <button
-                                    onClick={() => { setIsFileMenuOpen(false); handleExport(); }}
+                                    onClick={() => { setActiveMenu(null); handleExport(); }}
                                     className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                                 >
                                     <Upload className="w-4 h-4 text-slate-400" />
@@ -1400,22 +1457,22 @@ export default function App() {
 
                 <div className="relative">
                     <button 
-                        onClick={() => setIsToolboxOpen(!isToolboxOpen)}
-                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${isToolboxOpen ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
+                        onClick={() => setActiveMenu(activeMenu === 'toolbox' ? null : 'toolbox')}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeMenu === 'toolbox' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
                     >
                         <Briefcase className="w-3.5 h-3.5" />
                         {t.toolbox}
-                        <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${isToolboxOpen ? 'rotate-180' : ''}`} />
+                        <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'toolbox' ? 'rotate-180' : ''}`} />
                     </button>
                     
-                    {isToolboxOpen && (
+                    {activeMenu === 'toolbox' && (
                         <>
-                            <div className="fixed inset-0 z-40" onClick={() => setIsToolboxOpen(false)} />
+                            <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
                             <div className="absolute top-full left-0 mt-1 w-[280px] bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50 p-2">
                                 <div className="space-y-1">
                                     <button
                                         onClick={() => {
-                                            setIsToolboxOpen(false);
+                                            setActiveMenu(null);
                                             setIsAIModalOpen(true);
                                             setAiResponse(null); setInspectionReport(null); setAiPrompt('');
                                             setInspectionProgress(null); setReportGenerationTimer(null);
@@ -1433,7 +1490,7 @@ export default function App() {
                                     
                                     <button
                                         onClick={() => {
-                                            setIsToolboxOpen(false);
+                                            setActiveMenu(null);
                                             window.open('https://motion-tracking.axell.top/', '_blank');
                                         }}
                                         className="w-full flex items-center gap-3 px-2.5 py-2 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all group"
@@ -1448,7 +1505,7 @@ export default function App() {
                                     </button>
 
                                     <button
-                                        onClick={() => { setIsToolboxOpen(false); window.open('https://motion-editor.cyoahs.dev/', '_blank'); }}
+                                        onClick={() => { setActiveMenu(null); window.open('https://motion-editor.cyoahs.dev/', '_blank'); }}
                                         className="w-full flex items-center gap-3 px-2.5 py-2 rounded-md hover:bg-green-50 dark:hover:bg-green-900/20 transition-all group"
                                     >
                                         <div className="w-9 h-9 flex items-center justify-center bg-green-100 dark:bg-green-900/40 rounded-lg text-green-600 dark:text-green-400 shrink-0">
@@ -1462,7 +1519,7 @@ export default function App() {
 
                                     <button
                                         onClick={() => {
-                                            setIsToolboxOpen(false);
+                                            setActiveMenu(null);
                                             window.open('https://engine.bridgedp.com/', '_blank');
                                         }}
                                         className="w-full flex items-center gap-3 px-2.5 py-2 rounded-md hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-all group"
@@ -1479,6 +1536,37 @@ export default function App() {
                             </div>
                         </>
                     )}
+                </div>
+
+                <div className="relative">
+                    <button 
+                        onClick={() => setIsCodeViewerOpen(true)}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
+                    >
+                        <Code className="w-3.5 h-3.5" />
+                        {lang === 'zh' ? '源代码' : 'Source Code'}
+                    </button>
+                </div>
+
+                <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-1.5" />
+
+                <div className="flex items-center gap-0.5">
+                    <button 
+                        onClick={undo}
+                        disabled={!canUndo}
+                        className={`p-1.5 rounded-md transition-all ${!canUndo ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
+                        title={lang === 'zh' ? "撤销 (Ctrl+Z)" : "Undo (Ctrl+Z)"}
+                    >
+                        <Undo className="w-4 h-4" />
+                    </button>
+                    <button 
+                        onClick={redo}
+                        disabled={!canRedo}
+                        className={`p-1.5 rounded-md transition-all ${!canRedo ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
+                        title={lang === 'zh' ? "重做 (Ctrl+Shift+Z)" : "Redo (Ctrl+Shift+Z)"}
+                    >
+                        <Redo className="w-4 h-4" />
+                    </button>
                 </div>
             </div>
         </div>
@@ -1598,6 +1686,18 @@ export default function App() {
             onToggle={() => setRightSidebarCollapsed(!rightSidebarCollapsed)}
         />
       </div>
+
+      {/* Source Code Editor Window */}
+      {isCodeViewerOpen && (
+        <SourceCodeEditor
+            code={generateURDF(robot)}
+            onCodeChange={handleCodeChange}
+            onClose={() => setIsCodeViewerOpen(false)}
+            theme={theme}
+            fileName={`${robot.name}.urdf`}
+            lang={lang}
+        />
+      )}
 
       {/* AI Inspector Floating Window */}
             {isAIModalOpen && (

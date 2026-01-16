@@ -358,13 +358,61 @@ const GeometryEditor = ({
                 </div>
             )}
 
-            {geomData.type !== GeometryType.MESH && geomData.type !== GeometryType.NONE && (
+            {/* Box dimensions: Width (X), Depth (Y), Height (Z) */}
+            {geomData.type === GeometryType.BOX && (
                 <InputGroup label={t.dimensions}>
-                    <Vec3Input 
-                        value={geomData.dimensions || {x:0,y:0,z:0}} 
-                        onChange={(v: any) => update({ dimensions: v })}
-                        labels={['X/Rad', 'Y/Len', 'Z']}
+                    <div className="grid grid-cols-3 gap-2">
+                        <NumberInput 
+                            label={t.width || 'Width (X)'}
+                            value={geomData.dimensions?.x || 0.1} 
+                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, x: v } })}
+                            step={0.01}
+                        />
+                        <NumberInput 
+                            label={t.depth || 'Depth (Y)'}
+                            value={geomData.dimensions?.y || 0.1} 
+                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, y: v } })}
+                            step={0.01}
+                        />
+                        <NumberInput 
+                            label={t.height || 'Height (Z)'}
+                            value={geomData.dimensions?.z || 0.1} 
+                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, z: v } })}
+                            step={0.01}
+                        />
+                    </div>
+                </InputGroup>
+            )}
+
+            {/* Sphere dimensions: Radius only */}
+            {geomData.type === GeometryType.SPHERE && (
+                <InputGroup label={t.dimensions}>
+                    <NumberInput 
+                        label={t.radius || 'Radius'}
+                        value={geomData.dimensions?.x || 0.1} 
+                        onChange={(v: number) => update({ dimensions: { x: v, y: v, z: v } })}
+                        step={0.01}
                     />
+                </InputGroup>
+            )}
+
+            {/* Cylinder dimensions: Radius and Height */}
+            {geomData.type === GeometryType.CYLINDER && (
+                <InputGroup label={t.dimensions}>
+                    <div className="grid grid-cols-2 gap-2">
+                        <NumberInput 
+                            label={t.radius || 'Radius'}
+                            value={geomData.dimensions?.x || 0.05} 
+                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, x: v, z: v } })}
+                            step={0.01}
+                        />
+                        <NumberInput 
+                            label={t.height || 'Height'}
+                            value={geomData.dimensions?.y || 0.5} 
+                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, y: v } })}
+                            step={0.01}
+                        />
+                    </div>
                 </InputGroup>
             )}
 
