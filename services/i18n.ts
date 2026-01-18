@@ -150,6 +150,10 @@ export const translations = {
     rotateMode: "Rotate",
     universalMode: "Universal",
     selectMode: "Select",
+    viewMode: "View (Pan/Orbit)",
+    faceMode: "Select Face",
+    measureMode: "Measure",
+    closeToolbar: "Close Toolbar",
     
     // Toolbox Descriptions
     aiAssistantDesc: "Analyze robot structure and physics with AI",
@@ -306,6 +310,10 @@ export const translations = {
     rotateMode: "旋转",
     universalMode: "万能",
     selectMode: "选择",
+    viewMode: "视图 (平移/旋转)",
+    faceMode: "选择面",
+    measureMode: "测量",
+    closeToolbar: "关闭工具栏",
 
     // 工具箱描述
     aiAssistantDesc: "使用 AI 分析机器人结构和物理合理性",

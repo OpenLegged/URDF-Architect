@@ -16,7 +16,7 @@ import { generateRobotFromPrompt, runRobotInspection } from './services/geminiSe
 import { DEFAULT_MOTOR_LIBRARY } from './services/motorLibrary';
 import { translations, Language } from './services/i18n';
 import { INSPECTION_CRITERIA, getInspectionCategory } from './services/inspectionCriteria';
-import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight, FileText, RefreshCw, MessageCircle, Send, FileJson, Folder, Heart, Sun, Moon, Briefcase, Undo, Redo, RotateCcw, RotateCw, History, Code, Settings, Camera } from 'lucide-react';
+import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight, FileText, RefreshCw, MessageCircle, Send, FileJson, Folder, Heart, Sun, Moon, Briefcase, Undo, Redo, RotateCcw, RotateCw, History, Code, Settings, Camera, Eye, MoreHorizontal, Menu } from 'lucide-react';
 import JSZip from 'jszip';
 import jsPDF from 'jspdf';
 
@@ -210,9 +210,16 @@ export default function App() {
   const [toast, setToast] = useState<{ show: boolean; message: string; type: 'info' | 'success' }>({ show: false, message: '', type: 'info' });
   
   // Menu State
-  const [activeMenu, setActiveMenu] = useState<'file' | 'toolbox' | null>(null);
+  const [activeMenu, setActiveMenu] = useState<'file' | 'toolbox' | 'view' | null>(null);
   const [isAboutMenuOpen, setIsAboutMenuOpen] = useState(false);
   const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
+
+  // View Configuration State
+  const [viewConfig, setViewConfig] = useState({
+      showToolbar: true,
+      showOptionsPanel: true,
+      showJointPanel: true,
+  });
 
   const showPrivacyToast = () => {
       setToast({ 
@@ -1528,7 +1535,7 @@ export default function App() {
       {/* Header */}
       <header className="h-12 border-b flex items-center justify-between px-3 shrink-0 relative bg-white dark:bg-[#1a1d21] border-slate-200/80 dark:border-slate-700/50">
         {/* Left Section - Logo & Menus */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
             {/* Logo */}
             <div className="flex items-center gap-2 pr-3 mr-1 border-r border-slate-200 dark:border-slate-700/50">
                 <img src="/logo.png" alt="Logo" className="w-7 h-7 object-contain" />
@@ -1542,7 +1549,7 @@ export default function App() {
                         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeMenu === 'file' ? 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
                     >
                         <FileText className="w-3.5 h-3.5" />
-                        {t.file}
+                        <span className="hidden sm:inline">{t.file}</span>
                         <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'file' ? 'rotate-180' : ''}`} />
                     </button>
                     
@@ -1583,7 +1590,7 @@ export default function App() {
                         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeMenu === 'toolbox' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
                     >
                         <Briefcase className="w-3.5 h-3.5" />
-                        {t.toolbox}
+                        <span className="hidden sm:inline">{t.toolbox}</span>
                         <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'toolbox' ? 'rotate-180' : ''}`} />
                     </button>
                     
@@ -1664,17 +1671,71 @@ export default function App() {
 
                 <div className="relative">
                     <button 
+                        onClick={() => setActiveMenu(activeMenu === 'view' ? null : 'view')}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeMenu === 'view' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
+                    >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">{lang === 'zh' ? '视图' : 'View'}</span>
+                        <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'view' ? 'rotate-180' : ''}`} />
+                    </button>
+                    
+                    {activeMenu === 'view' && (
+                        <>
+                            <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
+                            <div className="absolute top-full left-0 mt-1 w-48 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50 overflow-hidden py-1">
+                                <button
+                                    onClick={() => setViewConfig(prev => ({ ...prev, showToolbar: !prev.showToolbar }))}
+                                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center justify-between group"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-4 h-4 flex items-center justify-center rounded border ${viewConfig.showToolbar ? 'bg-blue-500 border-blue-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}>
+                                            {viewConfig.showToolbar && <Check className="w-3 h-3" />}
+                                        </div>
+                                        <span>{lang === 'zh' ? '工具栏' : 'Toolbar'}</span>
+                                    </div>
+                                </button>
+                                <button
+                                    onClick={() => setViewConfig(prev => ({ ...prev, showOptionsPanel: !prev.showOptionsPanel }))}
+                                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center justify-between group"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-4 h-4 flex items-center justify-center rounded border ${viewConfig.showOptionsPanel ? 'bg-blue-500 border-blue-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}>
+                                            {viewConfig.showOptionsPanel && <Check className="w-3 h-3" />}
+                                        </div>
+                                        <span>{lang === 'zh' ? '细节选项' : 'Options Panel'}</span>
+                                    </div>
+                                </button>
+                                <button
+                                    onClick={() => setViewConfig(prev => ({ ...prev, showJointPanel: !prev.showJointPanel }))}
+                                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center justify-between group"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-4 h-4 flex items-center justify-center rounded border ${viewConfig.showJointPanel ? 'bg-blue-500 border-blue-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}>
+                                            {viewConfig.showJointPanel && <Check className="w-3 h-3" />}
+                                        </div>
+                                        <span>{lang === 'zh' ? '关节控制' : 'Joint Controls'}</span>
+                                    </div>
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-1.5 hidden md:block" />
+
+                <div className="relative hidden md:block">
+                    <button 
                         onClick={() => setIsCodeViewerOpen(true)}
                         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
                     >
                         <Code className="w-3.5 h-3.5" />
-                        {lang === 'zh' ? '源代码' : 'Source Code'}
+                        <span className="hidden lg:inline">{lang === 'zh' ? '源代码' : 'Source Code'}</span>
                     </button>
                 </div>
 
-                <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-1.5" />
+                <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-1.5 hidden md:block" />
 
-                <div className="flex items-center gap-0.5">
+                <div className="items-center gap-0.5 hidden md:flex">
                     <button 
                         onClick={undo}
                         disabled={!canUndo}
@@ -1695,38 +1756,38 @@ export default function App() {
             </div>
         </div>
 
-        {/* Center - Mode Switcher */}
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-            <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5">
+        {/* Center - Mode Switcher - Hidden on smaller screens (< xl) */}
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden xl:flex">
+            <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 shrink-0">
                 <button 
                     onClick={() => setAppMode('skeleton')}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${appMode === 'skeleton' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
                 >
                     <Activity className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">{t.skeleton}</span>
+                    <span className="hidden lg:inline">{t.skeleton}</span>
                 </button>
                 <button 
                     onClick={() => setAppMode('detail')}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${appMode === 'detail' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
                 >
                     <Box className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">{t.detail}</span>
+                    <span className="hidden lg:inline">{t.detail}</span>
                 </button>
                 <button 
                     onClick={() => setAppMode('hardware')}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${appMode === 'hardware' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
                 >
                     <Cpu className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">{t.hardware}</span>
+                    <span className="hidden lg:inline">{t.hardware}</span>
                 </button>
             </div>
         </div>
 
         {/* Right Section - Actions */}
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5 shrink-0">
             <button 
                 onClick={handleSnapshot}
-                className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
+                className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
                 title={lang === 'zh' ? "快照" : "Snapshot"}
             >
                 <Camera className="w-4 h-4" />
@@ -1734,7 +1795,7 @@ export default function App() {
 
             <button 
                 onClick={() => setIsSettingsOpen(true)}
-                className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
+                className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
                 title={lang === 'zh' ? "设置" : "Settings"}
             >
                 <Settings className="w-4 h-4" />
@@ -1742,7 +1803,7 @@ export default function App() {
 
             <button 
                 onClick={() => setLang(prev => prev === 'en' ? 'zh' : 'en')}
-                className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
+                className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
                 title={lang === 'zh' ? "切换语言" : "Switch Language"}
             >
                 <Globe className="w-3.5 h-3.5" />
@@ -1751,21 +1812,75 @@ export default function App() {
 
             <button
                 onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
-                className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
+                className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
                 title={lang === 'zh' ? "切换主题" : "Toggle Theme"}
             >
                 {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
 
-            <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-1" />
+            <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-1 hidden sm:block" />
 
             <button 
                 onClick={() => setIsAboutMenuOpen(true)}
-                className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
+                className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
                 title={lang === 'zh' ? "关于" : "About"}
             >
                 <Info className="w-4 h-4" />
             </button>
+
+            {/* Mobile/Tablet "More" Menu */}
+            <div className="relative sm:hidden">
+                <button 
+                    onClick={() => setActiveMenu(activeMenu === 'more' ? null : 'more')} // Reusing state logic or need new one? 'more' is not in type yet.
+                    className={`flex items-center justify-center w-8 h-8 rounded-md transition-all ${activeMenu === 'more' ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                >
+                    <MoreHorizontal className="w-5 h-5" />
+                </button>
+                {activeMenu === 'more' && (
+                    <>
+                        <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
+                        <div className="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50 overflow-hidden py-1">
+                            {/* Mode Switcher for Mobile */}
+                            <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700 md:hidden">
+                                <div className="text-[10px] uppercase text-slate-400 font-bold mb-1">{t.modeLabel}</div>
+                                <div className="flex gap-1">
+                                    <button onClick={() => { setAppMode('skeleton'); setActiveMenu(null); }} className={`flex-1 p-1.5 rounded text-center text-xs ${appMode === 'skeleton' ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-600'}`}><Activity className="w-4 h-4 mx-auto" /></button>
+                                    <button onClick={() => { setAppMode('detail'); setActiveMenu(null); }} className={`flex-1 p-1.5 rounded text-center text-xs ${appMode === 'detail' ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-600'}`}><Box className="w-4 h-4 mx-auto" /></button>
+                                    <button onClick={() => { setAppMode('hardware'); setActiveMenu(null); }} className={`flex-1 p-1.5 rounded text-center text-xs ${appMode === 'hardware' ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-600'}`}><Cpu className="w-4 h-4 mx-auto" /></button>
+                                </div>
+                            </div>
+
+                            <button onClick={() => { setIsCodeViewerOpen(true); setActiveMenu(null); }} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center gap-3">
+                                <Code className="w-4 h-4" /> {lang === 'zh' ? '源代码' : 'Source Code'}
+                            </button>
+                            <button onClick={() => { undo(); setActiveMenu(null); }} disabled={!canUndo} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center gap-3 disabled:opacity-50">
+                                <Undo className="w-4 h-4" /> {lang === 'zh' ? '撤销' : 'Undo'}
+                            </button>
+                            <button onClick={() => { redo(); setActiveMenu(null); }} disabled={!canRedo} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center gap-3 disabled:opacity-50">
+                                <Redo className="w-4 h-4" /> {lang === 'zh' ? '重做' : 'Redo'}
+                            </button>
+                            
+                            <div className="h-px bg-slate-100 dark:bg-slate-700 my-1" />
+                            
+                            <button onClick={() => { handleSnapshot(); setActiveMenu(null); }} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center gap-3">
+                                <Camera className="w-4 h-4" /> {lang === 'zh' ? "快照" : "Snapshot"}
+                            </button>
+                            <button onClick={() => { setIsSettingsOpen(true); setActiveMenu(null); }} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center gap-3">
+                                <Settings className="w-4 h-4" /> {lang === 'zh' ? "设置" : "Settings"}
+                            </button>
+                            <button onClick={() => { setLang(prev => prev === 'en' ? 'zh' : 'en'); setActiveMenu(null); }} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center gap-3">
+                                <Globe className="w-4 h-4" /> {lang === 'zh' ? "切换语言" : "Switch Language"}
+                            </button>
+                            <button onClick={() => { setTheme(prev => prev === 'dark' ? 'light' : 'dark'); setActiveMenu(null); }} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center gap-3">
+                                {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />} {lang === 'zh' ? "切换主题" : "Toggle Theme"}
+                            </button>
+                            <button onClick={() => { setIsAboutMenuOpen(true); setActiveMenu(null); }} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center gap-3">
+                                <Info className="w-4 h-4" /> {lang === 'zh' ? "关于" : "About"}
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
         </div>
       </header>
 
@@ -1805,6 +1920,12 @@ export default function App() {
                 showVisual={showVisual}
                 setShowVisual={handleSetShowVisual}
                 snapshotAction={snapshotActionRef}
+                showToolbar={viewConfig.showToolbar}
+                setShowToolbar={(show) => setViewConfig(prev => ({ ...prev, showToolbar: show }))}
+                showOptionsPanel={viewConfig.showOptionsPanel}
+                setShowOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showOptionsPanel: show }))}
+                showJointPanel={viewConfig.showJointPanel}
+                setShowJointPanel={(show) => setViewConfig(prev => ({ ...prev, showJointPanel: show }))}
                 onCollisionTransform={(linkId, position, rotation) => {
                     // linkId is the selection.id which is the link's ID (not name)
                     console.log('App.tsx onCollisionTransform called:', { linkId, position, rotation });

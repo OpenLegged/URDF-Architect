@@ -6,9 +6,10 @@
 
 import React, { Suspense, useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
-import { OrbitControls, Grid, Environment, GizmoHelper, GizmoViewport, Html, TransformControls } from '@react-three/drei';
+import { OrbitControls, Grid, Environment, GizmoHelper, GizmoViewport, Html, TransformControls, Line } from '@react-three/drei';
 import * as THREE from 'three';
-import { RotateCcw, Move, ArrowUpRight } from 'lucide-react';
+import { RotateCcw, Move, ArrowUpRight, MousePointer2, Hand, Ruler, BoxSelect, View as ViewIcon, CheckSquare, Scan, MousePointerClick, X, Eye } from 'lucide-react';
+import Draggable from 'react-draggable';
 // @ts-ignore
 import URDFLoader from 'urdf-loader';
 import { translations, Language } from '../services/i18n';
@@ -29,6 +30,12 @@ interface URDFViewerProps {
     focusTarget?: string | null;
     showVisual?: boolean;
     setShowVisual?: (show: boolean) => void;
+    showToolbar?: boolean;
+    setShowToolbar?: (show: boolean) => void;
+    showOptionsPanel?: boolean;
+    setShowOptionsPanel?: (show: boolean) => void;
+    showJointPanel?: boolean;
+    setShowJointPanel?: (show: boolean) => void;
     onCollisionTransform?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}) => void;
     snapshotAction?: React.MutableRefObject<(() => void) | null>;
 }
@@ -471,6 +478,7 @@ interface RobotModelProps {
     robotLinks?: Record<string, UrdfLink>; // Link data from the app state, contains inertial info
     focusTarget?: string | null;
     transformMode?: 'select' | 'translate' | 'rotate' | 'universal';
+    toolMode?: ToolMode;
     onCollisionTransformEnd?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}) => void;
 }
 
@@ -484,6 +492,15 @@ const highlightMaterial = new THREE.MeshPhongMaterial({
     emissive: 0x60a5fa,
     emissiveIntensity: 0.25,
     side: THREE.DoubleSide,
+});
+
+const highlightFaceMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff0000,
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide,
+    depthTest: false, // Render on top
+    depthWrite: false
 });
 
 const collisionHighlightMaterial = new THREE.MeshPhongMaterial({
@@ -504,7 +521,7 @@ const collisionBaseMaterial = new THREE.MeshBasicMaterial({
     depthTest: false
 });
 
-function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false, showVisual = true, onSelect, onJointChange, jointAngles, setIsDragging, setActiveJoint, justSelectedRef, t, mode, selection, hoveredSelection, highlightMode = 'link', showInertia = false, showCenterOfMass = false, showOrigins = false, originSize = 1.0, showJointAxes = false, jointAxisSize = 1.0, robotLinks, focusTarget, transformMode = 'select', onCollisionTransformEnd }: RobotModelProps & { selection?: URDFViewerProps['selection'], hoveredSelection?: URDFViewerProps['selection'] }) {
+function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false, showVisual = true, onSelect, onJointChange, jointAngles, setIsDragging, setActiveJoint, justSelectedRef, t, mode, selection, hoveredSelection, highlightMode = 'link', showInertia = false, showCenterOfMass = false, showOrigins = false, originSize = 1.0, showJointAxes = false, jointAxisSize = 1.0, robotLinks, focusTarget, transformMode = 'select', toolMode = 'select', onCollisionTransformEnd }: RobotModelProps & { selection?: URDFViewerProps['selection'], hoveredSelection?: URDFViewerProps['selection'] }) {
     const [robot, setRobot] = useState<THREE.Object3D | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [robotVersion, setRobotVersion] = useState(0); // Track async loading updates
@@ -535,6 +552,98 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
     const focusTargetRef = useRef<THREE.Vector3 | null>(null);
     const cameraTargetPosRef = useRef<THREE.Vector3 | null>(null);
     const isFocusingRef = useRef(false);
+
+    // Face selection state
+    const [highlightedFace, setHighlightedFace] = useState<{ mesh: THREE.Mesh, faceIndex: number } | null>(null);
+    const highlightedFaceMeshRef = useRef<THREE.Mesh | null>(null);
+
+    // Update face highlight mesh
+    useEffect(() => {
+        if (!highlightedFace) {
+            if (highlightedFaceMeshRef.current) {
+                highlightedFaceMeshRef.current.visible = false;
+            }
+            return;
+        }
+
+        const { mesh, faceIndex } = highlightedFace;
+        const geometry = mesh.geometry;
+        
+        if (!geometry) return;
+
+        // Create a new mesh for the face highlight if it doesn't exist
+        if (!highlightedFaceMeshRef.current) {
+            highlightedFaceMeshRef.current = new THREE.Mesh(new THREE.BufferGeometry(), highlightFaceMaterial);
+            highlightedFaceMeshRef.current.renderOrder = 2000;
+            scene.add(highlightedFaceMeshRef.current);
+        }
+
+        const highlightMesh = highlightedFaceMeshRef.current;
+        highlightMesh.visible = true;
+
+        const positionAttribute = geometry.getAttribute('position');
+        const indexAttribute = geometry.getIndex();
+        const positions = [];
+
+        // Helper to get face normal
+        if (faceIndex !== undefined) {
+            const positions = [];
+            
+            // Just select the single clicked face/triangle
+            if (indexAttribute) {
+                const a = indexAttribute.getX(faceIndex * 3);
+                const b = indexAttribute.getX(faceIndex * 3 + 1);
+                const c = indexAttribute.getX(faceIndex * 3 + 2);
+                
+                positions.push(
+                    positionAttribute.getX(a), positionAttribute.getY(a), positionAttribute.getZ(a),
+                    positionAttribute.getX(b), positionAttribute.getY(b), positionAttribute.getZ(b),
+                    positionAttribute.getX(c), positionAttribute.getY(c), positionAttribute.getZ(c)
+                );
+            } else {
+                 const a = faceIndex * 3;
+                 const b = faceIndex * 3 + 1;
+                 const c = faceIndex * 3 + 2;
+                 
+                 positions.push(
+                    positionAttribute.getX(a), positionAttribute.getY(a), positionAttribute.getZ(a),
+                    positionAttribute.getX(b), positionAttribute.getY(b), positionAttribute.getZ(b),
+                    positionAttribute.getX(c), positionAttribute.getY(c), positionAttribute.getZ(c)
+                );
+            }
+            
+            const highlightGeo = highlightMesh.geometry;
+            highlightGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            highlightGeo.computeVertexNormals();
+        }
+
+    }, [highlightedFace, scene]);
+
+    // Sync face highlight transform
+    useFrame(() => {
+        if (highlightedFace && highlightedFaceMeshRef.current) {
+             const mesh = highlightedFace.mesh;
+             const highlight = highlightedFaceMeshRef.current;
+             
+             // Simple approach: Copy world matrix
+             mesh.updateMatrixWorld();
+             highlight.matrix.copy(mesh.matrixWorld);
+             highlight.matrixAutoUpdate = false; 
+             // Note: matrixWorld is composed of position, rotation, scale.
+             // If we add to scene, we can set matrix directly if matrixAutoUpdate is false.
+        }
+    });
+
+    // Clean up face highlight
+    useEffect(() => {
+        return () => {
+            if (highlightedFaceMeshRef.current) {
+                scene.remove(highlightedFaceMeshRef.current);
+                highlightedFaceMeshRef.current.geometry.dispose();
+                highlightedFaceMeshRef.current = null;
+            }
+        };
+    }, [scene]);
 
     // Handle focus target change
     useEffect(() => {
@@ -872,6 +981,15 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
         const handleMouseDown = (e: MouseEvent) => {
             if (!robot) return;
             
+            // If in measure or view mode, do not perform selection/drag
+            // Only allow selection in standard modes (select, translate, rotate, universal)
+            // View mode handles pan/orbit but no selection
+            // Face mode handles face selection separately (TODO: Implement click to select face)
+            // Measure mode handles measurement points
+            const isStandardSelectionMode = ['select', 'translate', 'rotate', 'universal'].includes(toolMode || 'select');
+            
+            if (!isStandardSelectionMode) return;
+            
             // Cast ray from mouse position
             const rect = gl.domElement.getBoundingClientRect();
             const mouse = new THREE.Vector2(
@@ -1030,7 +1148,7 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
             gl.domElement.removeEventListener('mouseup', handleMouseUp);
             gl.domElement.removeEventListener('mouseleave', handleMouseLeave);
         };
-    }, [gl, camera, robot, onSelect, highlightGeometry, highlightMode]);
+    }, [gl, camera, robot, onSelect, highlightGeometry, highlightMode, toolMode]);
     
     // Continuous hover detection like robot_viewer's URDFDragControls.update()
     useFrame(() => {
@@ -1038,10 +1156,62 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
         
         // If dragging joint, do not update hover highlight
         if (isDraggingJoint.current) return;
+
+        // Standard link highlighting - ONLY for first 5 modes
+        // Modes: view, select, translate, rotate, universal
+        const isStandardMode = ['view', 'select', 'translate', 'rotate', 'universal'].includes(toolMode || 'select');
+
+        // Handle Face Selection Mode
+        if (toolMode === 'face') {
+            raycasterRef.current.setFromCamera(mouseRef.current, camera);
+            const intersects = raycasterRef.current.intersectObject(robot, true);
+            
+            if (intersects.length > 0) {
+                 const hit = intersects[0];
+                 // Filter out gizmos
+                 let isGizmo = false;
+                 let obj: THREE.Object3D | null = hit.object;
+                 while(obj) {
+                     if (obj.userData?.isGizmo) { isGizmo = true; break; }
+                     obj = obj.parent;
+                 }
+
+                 if (!isGizmo && hit.faceIndex !== undefined && hit.object instanceof THREE.Mesh) {
+                     // Check if we need to update the highlight (new face or new mesh)
+                     if (highlightedFace?.faceIndex !== hit.faceIndex || highlightedFace?.mesh !== hit.object) {
+                         setHighlightedFace({ mesh: hit.object, faceIndex: hit.faceIndex });
+                     }
+                     // Hide link highlight if any
+                     if (hoveredLinkRef.current) {
+                        highlightGeometry(hoveredLinkRef.current, true);
+                        hoveredLinkRef.current = null;
+                     }
+                     return;
+                 }
+            }
+            if (highlightedFace) setHighlightedFace(null);
+            return;
+        }
+        
+        // Hide face highlight if not in face mode
+        if (toolMode !== 'face' && highlightedFace) {
+             setHighlightedFace(null);
+        }
         
         // Skip hover processing briefly after selection to avoid race condition
         // with async React state update (selection?.id may be stale)
         if (justSelectedRef?.current) return;
+
+        // If NOT in standard mode, clear any existing link highlight and return
+        if (!isStandardMode) {
+            if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
+                const isCollisionMode = highlightMode === 'collision';
+                highlightGeometry(hoveredLinkRef.current, true, isCollisionMode ? 'collision' : 'visual', (hoveredLinkRef as any).currentMesh);
+                hoveredLinkRef.current = null;
+                (hoveredLinkRef as any).currentMesh = null;
+            }
+            return;
+        }
 
         raycasterRef.current.setFromCamera(mouseRef.current, camera);
         
@@ -2595,7 +2765,158 @@ const JointControlItem = ({
 
     };
 
-export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'detail', onSelect, theme, selection, hoveredSelection, robotLinks, focusTarget, showVisual: propShowVisual, setShowVisual: propSetShowVisual, snapshotAction, onCollisionTransform }: URDFViewerProps) {
+type ToolMode = 'select' | 'translate' | 'rotate' | 'universal' | 'view' | 'face' | 'measure';
+
+// Measure Tool Component
+const MeasureTool = ({ active, robot }: { active: boolean, robot: THREE.Object3D | null }) => {
+    const { camera, gl } = useThree();
+    const [points, setPoints] = useState<THREE.Vector3[]>([]);
+    const [tempPoint, setTempPoint] = useState<THREE.Vector3 | null>(null);
+    const raycaster = useMemo(() => new THREE.Raycaster(), []);
+    const mouse = useRef(new THREE.Vector2());
+
+    useEffect(() => {
+        if (!active) {
+            setPoints([]);
+            setTempPoint(null);
+        }
+    }, [active]);
+
+    useEffect(() => {
+        if (!active || !robot) return;
+
+        const handleMouseMove = (event: MouseEvent) => {
+            const rect = gl.domElement.getBoundingClientRect();
+            mouse.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+            if (points.length === 1) {
+                 raycaster.setFromCamera(mouse.current, camera);
+                 const intersects = raycaster.intersectObject(robot, true);
+                 if (intersects.length > 0) {
+                     setTempPoint(intersects[0].point);
+                 } else {
+                     setTempPoint(null);
+                 }
+            }
+        };
+
+        const handleClick = (event: MouseEvent) => {
+             // Ignore clicks on UI elements
+             if ((event.target as HTMLElement).closest('.urdf-toolbar') || 
+                 (event.target as HTMLElement).closest('.urdf-options-panel') ||
+                 (event.target as HTMLElement).closest('.urdf-joint-panel')) return;
+             
+             raycaster.setFromCamera(mouse.current, camera);
+             const intersects = raycaster.intersectObject(robot, true);
+             
+             if (intersects.length > 0) {
+                 const point = intersects[0].point;
+                 setPoints(prev => {
+                     if (prev.length >= 2) return [point]; 
+                     return [...prev, point];
+                 });
+                 setTempPoint(null);
+             }
+        };
+
+        gl.domElement.addEventListener('mousemove', handleMouseMove);
+        gl.domElement.addEventListener('click', handleClick);
+
+        return () => {
+            gl.domElement.removeEventListener('mousemove', handleMouseMove);
+            gl.domElement.removeEventListener('click', handleClick);
+        };
+    }, [active, robot, points, camera, gl, raycaster]);
+
+    if (!active) return null;
+
+    const renderPoints = [...points];
+    if (points.length === 1 && tempPoint) {
+        renderPoints.push(tempPoint);
+    }
+
+    return (
+        <group>
+            {renderPoints.map((p, i) => (
+                <mesh key={i} position={p}>
+                    <sphereGeometry args={[0.0025, 16, 16]} />
+                    <meshBasicMaterial color="#ef4444" depthTest={false} transparent opacity={0.8} />
+                </mesh>
+            ))}
+            {renderPoints.length === 2 && (
+                <>
+                    <Line points={[renderPoints[0], renderPoints[1]]} color="#ef4444" lineWidth={2} depthTest={false} />
+                    <Html position={new THREE.Vector3().addVectors(renderPoints[0], renderPoints[1]).multiplyScalar(0.5)}>
+                        <div className="bg-black/70 text-white px-2 py-1 rounded text-xs whitespace-nowrap pointer-events-none font-mono">
+                            {renderPoints[0].distanceTo(renderPoints[1]).toFixed(4)}m
+                        </div>
+                    </Html>
+                </>
+            )}
+        </group>
+    );
+};
+
+const ViewerToolbar = ({ activeMode, setMode, onClose, lang = 'en' }: { activeMode: ToolMode, setMode: (mode: ToolMode) => void, onClose?: () => void, lang?: Language }) => {
+    const nodeRef = useRef(null);
+    const t = translations[lang];
+    const tools = [
+        { id: 'view', icon: ViewIcon, label: t.viewMode },
+        { id: 'select', icon: MousePointer2, label: t.selectMode },
+        { id: 'translate', icon: Move, label: t.translateMode },
+        { id: 'rotate', icon: RotateCcw, label: t.rotateMode },
+        { id: 'universal', icon: ArrowUpRight, label: t.universalMode },
+        { id: 'face', icon: Scan, label: t.faceMode },
+        { id: 'measure', icon: Ruler, label: t.measureMode },
+    ];
+
+    return (
+        <Draggable bounds="parent" handle=".drag-handle" nodeRef={nodeRef}>
+            <div ref={nodeRef} className="urdf-toolbar absolute top-4 left-0 right-0 mx-auto w-fit z-40 bg-white/90 dark:bg-slate-800/90 backdrop-blur rounded-lg border border-slate-200 dark:border-slate-700 shadow-xl flex items-center p-1 gap-1 cursor-auto">
+                <div className="drag-handle cursor-move px-1 text-slate-300 dark:text-slate-600 flex items-center h-full mr-1 hover:text-slate-500 dark:hover:text-slate-400">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+                </div>
+                {tools.map((tool) => {
+                    const isActive = activeMode === tool.id;
+                    const Icon = tool.icon;
+                    return (
+                        <button
+                            key={tool.id}
+                            onClick={() => setMode(tool.id as ToolMode)}
+                            className={`group relative p-1.5 rounded-md transition-all ${
+                                isActive 
+                                ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/50 dark:text-blue-400 shadow-sm' 
+                                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-700 dark:hover:text-slate-200'
+                            }`}
+                        >
+                            <Icon className="w-4 h-4" />
+                            <span className="absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-75 pointer-events-none whitespace-nowrap z-50 shadow-lg">
+                                {tool.label}
+                            </span>
+                        </button>
+                    );
+                })}
+                {onClose && (
+                    <>
+                        <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1"></div>
+                        <button
+                            onClick={onClose}
+                            className="group relative p-1.5 rounded-md text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 transition-all"
+                        >
+                            <X className="w-4 h-4" />
+                            <span className="absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-75 pointer-events-none whitespace-nowrap z-50 shadow-lg">
+                                {t.closeToolbar}
+                            </span>
+                        </button>
+                    </>
+                )}
+            </div>
+        </Draggable>
+    );
+};
+
+export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'detail', onSelect, theme, selection, hoveredSelection, robotLinks, focusTarget, showVisual: propShowVisual, setShowVisual: propSetShowVisual, snapshotAction, onCollisionTransform, showToolbar = true, setShowToolbar, showOptionsPanel = true, setShowOptionsPanel, showJointPanel = true, setShowJointPanel }: URDFViewerProps) {
     const t = translations[lang];
     const [robot, setRobot] = useState<any>(null);
     const [selectedJoint, setSelectedJoint] = useState<string | null>(null);
@@ -2641,8 +2962,11 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
     // Highlight mode: 'link' (default) or 'collision'
     const [highlightMode, setHighlightMode] = useState<'link' | 'collision'>('link');
     
-    // Transform mode for collision editing: 'select' | 'translate' | 'rotate' | 'universal'
-    const [transformMode, setTransformMode] = useState<'select' | 'translate' | 'rotate' | 'universal'>('select');
+    // Tool mode
+    const [toolMode, setToolMode] = useState<ToolMode>('select');
+    
+    // Derived transform mode for RobotModel compatibility
+    const transformMode = (['translate', 'rotate', 'universal'].includes(toolMode) ? toolMode : 'select') as 'select' | 'translate' | 'rotate' | 'universal';
     
     // Automatically show collisions when collision highlight mode is selected
     useEffect(() => {
@@ -2865,6 +3189,7 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
             </div>
 
             {/* Settings panel - draggable */}
+            {showOptionsPanel && (
             <div 
                 ref={optionsPanelRef}
                 className="absolute z-30 pointer-events-auto"
@@ -2884,16 +3209,26 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                             </svg>
                             {mode === 'hardware' ? t.hardwareOptions : t.detailOptions}
                         </div>
-                        <button 
-                            onClick={(e) => { e.stopPropagation(); toggleOptionsCollapsed(); }}
-                            className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-1 hover:bg-slate-200 dark:hover:bg-google-dark-border rounded"
-                        >
-                            {isOptionsCollapsed ? (
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                            ) : (
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                        <div className="flex items-center gap-1">
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); toggleOptionsCollapsed(); }}
+                                className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-1 hover:bg-slate-200 dark:hover:bg-google-dark-border rounded"
+                            >
+                                {isOptionsCollapsed ? (
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                                ) : (
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                                )}
+                            </button>
+                            {setShowOptionsPanel && (
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); setShowOptionsPanel(false); }}
+                                    className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-1 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 rounded"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
                             )}
-                        </button>
+                        </div>
                     </div>
                     
                     {!isOptionsCollapsed && (
@@ -2916,46 +3251,7 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                             </div>
                         </div>
 
-                        {/* Transform Mode - only shown in collision mode */}
-                        {highlightMode === 'collision' && mode === 'detail' && (
-                        <div className="border-b border-slate-200 dark:border-slate-700 pb-2 mb-1">
-                            <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1.5 px-1">{t.transformMode || "Transform Mode"}</div>
-                            <div className="grid grid-cols-4 gap-0.5 bg-slate-100 dark:bg-google-dark-bg rounded p-0.5">
-                                <button
-                                    onClick={() => setTransformMode('select')}
-                                    className={`flex flex-col items-center justify-center py-1.5 text-[9px] font-medium rounded transition-all ${transformMode === 'select' ? 'bg-white dark:bg-google-dark-surface text-google-blue shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'}`}
-                                    title={t.selectMode || "Select"}
-                                >
-                                    <svg className="w-3.5 h-3.5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" /></svg>
-                                    {t.selectMode || "Select"}
-                                </button>
-                                <button
-                                    onClick={() => setTransformMode('translate')}
-                                    className={`flex flex-col items-center justify-center py-1.5 text-[9px] font-medium rounded transition-all ${transformMode === 'translate' ? 'bg-white dark:bg-google-dark-surface text-google-blue shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'}`}
-                                    title={t.translateMode || "Translate"}
-                                >
-                                    <Move className="w-3.5 h-3.5 mb-0.5" />
-                                    {t.translateMode || "Move"}
-                                </button>
-                                <button
-                                    onClick={() => setTransformMode('rotate')}
-                                    className={`flex flex-col items-center justify-center py-1.5 text-[9px] font-medium rounded transition-all ${transformMode === 'rotate' ? 'bg-white dark:bg-google-dark-surface text-google-blue shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'}`}
-                                    title={t.rotateMode || "Rotate"}
-                                >
-                                    <RotateCcw className="w-3.5 h-3.5 mb-0.5" />
-                                    {t.rotateMode || "Rotate"}
-                                </button>
-                                <button
-                                    onClick={() => setTransformMode('universal')}
-                                    className={`flex flex-col items-center justify-center py-1.5 text-[9px] font-medium rounded transition-all ${transformMode === 'universal' ? 'bg-white dark:bg-google-dark-surface text-google-blue shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'}`}
-                                    title={t.universalMode || "Universal"}
-                                >
-                                    <svg className="w-3.5 h-3.5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
-                                    {t.universalMode || "All"}
-                                </button>
-                            </div>
-                        </div>
-                        )}
+
 
                         <div className="space-y-1">
                             <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
@@ -3078,9 +3374,10 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                     )}
                 </div>
             </div>
+            )}
             
             {/* Joint controls panel - draggable */}
-            {showJointControls && robot?.joints && Object.keys(robot.joints).length > 0 && (
+            {showJointControls && showJointPanel && robot?.joints && Object.keys(robot.joints).length > 0 && (
                 <div 
                     ref={jointPanelRef}
                     className="absolute z-30 bg-white/90 dark:bg-google-dark-surface/90 backdrop-blur rounded-lg border border-slate-200 dark:border-google-dark-border max-h-[50vh] overflow-hidden w-64 shadow-xl flex flex-col pointer-events-auto"
@@ -3123,6 +3420,14 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
                                 )}
                             </button>
+                            {setShowJointPanel && (
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); setShowJointPanel(false); }}
+                                    className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-1 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 rounded"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
+                            )}
                         </div>
                     </div>
                     {!isJointsCollapsed && (
@@ -3147,6 +3452,16 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                     </div>
                     )}
                 </div>
+            )}
+            
+            {/* Toolbar - Floating centered top */}
+            {showToolbar && (
+                <ViewerToolbar 
+                    activeMode={toolMode} 
+                    setMode={setToolMode} 
+                    onClose={setShowToolbar ? () => setShowToolbar(false) : undefined}
+                    lang={lang}
+                />
             )}
             
             <Canvas
@@ -3174,6 +3489,8 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                 <Environment files="/potsdamer_platz_1k.hdr" />
                 <SnapshotManager actionRef={snapshotAction} robotName={robot?.name || 'robot'} />
                 
+                <MeasureTool active={toolMode === 'measure'} robot={robot} />
+
                 <Suspense fallback={null}>
                     <RobotModel
                         urdfContent={urdfContent}
